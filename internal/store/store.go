@@ -13,6 +13,16 @@ import (
 	"time"
 )
 
+// fileSize returns the current byte size of the file backing the store.
+// Must be called with at least a read lock held.
+func (s *Store) fileSize() int64 {
+	info, err := s.f.Stat()
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
 // syncer is satisfied by *os.File and allows tests to inject a mock that
 // counts Sync calls (needed for Scenario M — single fsync per AppendBatch).
 type syncer interface {
@@ -302,6 +312,204 @@ func (s *Store) Rebuild() error {
 	s.idx = newIdx
 	s.dirty = false
 	return nil
+}
+
+// computeAppendFields fills all store-managed fields (canonical_id, line_ulid,
+// revision, supersedes, schema_version) for a single record given a projected
+// index snapshot. It returns the completed record, the updated projected index,
+// and any validation error. It does NOT write to the file or the real index.
+func computeAppendFields(
+	r CanonicalRecord,
+	projected map[string]IndexEntry,
+	u ulidSource,
+) (CanonicalRecord, map[string]IndexEntry, error) {
+	// Tombstone-supersedes pre-check: if caller already set deleted=true and
+	// a non-empty supersedes that disagrees with canonical_id, reject early.
+	if r.Deleted && r.CanonicalID != "" && r.Supersedes != "" && r.Supersedes != r.CanonicalID {
+		return CanonicalRecord{}, projected,
+			fmt.Errorf("append: %w", ErrInvalidRecord)
+	}
+
+	if r.CanonicalID == "" {
+		// New chain — store assigns canonical_id.
+		if r.Deleted {
+			return CanonicalRecord{}, projected,
+				fmt.Errorf("append: cannot tombstone unknown id: %w", ErrInvalidRecord)
+		}
+		r.CanonicalID = u.Make()
+		r.Revision = 1
+		r.Supersedes = ""
+	} else {
+		existing, ok := projected[r.CanonicalID]
+		if !ok {
+			// Caller-supplied canonical_id for a brand-new chain.
+			if r.Deleted {
+				return CanonicalRecord{}, projected,
+					fmt.Errorf("append: tombstone for unknown canonical_id: %w", ErrNotFound)
+			}
+			if r.Revision == 0 {
+				r.Revision = 1
+			}
+			r.Supersedes = ""
+		} else {
+			// Existing chain.
+			if r.Deleted && existing.Deleted {
+				return CanonicalRecord{}, projected,
+					fmt.Errorf("append: already tombstoned: %w", ErrDeleted)
+			}
+			r.Revision = existing.LatestRevision + 1
+			r.Supersedes = r.CanonicalID // self-referential per REQ-DATA-04/05
+		}
+	}
+
+	// Tombstone invariant (defensive — catches any remaining mismatch).
+	if r.Deleted && r.Supersedes != r.CanonicalID {
+		return CanonicalRecord{}, projected,
+			fmt.Errorf("append: tombstone supersedes mismatch: %w", ErrInvalidRecord)
+	}
+
+	// Validate the completed record fields.
+	if err := validateRecord(r); err != nil {
+		return CanonicalRecord{}, projected, fmt.Errorf("append: %w", err)
+	}
+
+	r.LineULID = u.Make() // unconditional per REQ-DATA-03
+	r.SchemaVersion = StoreSupportedVersion
+
+	// Update projected index so subsequent records in a batch see this revision.
+	projected[r.CanonicalID] = IndexEntry{
+		CanonicalID:    r.CanonicalID,
+		LatestRevision: r.Revision,
+		Deleted:        r.Deleted,
+		UpdatedAt:      r.UpdatedAt,
+		LineULID:       r.LineULID,
+	}
+
+	return r, projected, nil
+}
+
+// Append writes a single CanonicalRecord to memory.jsonl. The store assigns
+// canonical_id (if empty), line_ulid (always), revision, and supersedes.
+// The write is buffered; durability is guaranteed only after AppendBatch or Close.
+func (s *Store) Append(r CanonicalRecord) (CanonicalRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return CanonicalRecord{}, errors.New("store: closed")
+	}
+
+	// Clone the index entries map so computeAppendFields can update a projection.
+	projected := make(map[string]IndexEntry, len(s.idx.Entries))
+	for k, v := range s.idx.Entries {
+		projected[k] = v
+	}
+
+	completed, projected, err := computeAppendFields(r, projected, s.ulid)
+	if err != nil {
+		return CanonicalRecord{}, err
+	}
+
+	data, err := json.Marshal(completed)
+	if err != nil {
+		return CanonicalRecord{}, fmt.Errorf("append: marshal: %w", err)
+	}
+	data = append(data, '\n')
+
+	offset := s.fileSize() + int64(s.w.Buffered())
+
+	if _, err := s.w.Write(data); err != nil {
+		return CanonicalRecord{}, fmt.Errorf("append: write: %w", err)
+	}
+
+	// Update the real in-memory index with the new offset.
+	entry := projected[completed.CanonicalID]
+	entry.LatestLineOffset = offset
+	s.idx.Entries[completed.CanonicalID] = entry
+	s.dirty = true
+
+	return completed, nil
+}
+
+// AppendBatch appends multiple records and performs exactly one flush + fsync
+// + index persist at the end. If any record fails validation the entire batch
+// is rejected and memory.jsonl is left unchanged. An empty slice is a no-op.
+func (s *Store) AppendBatch(rs []CanonicalRecord) ([]CanonicalRecord, error) {
+	if len(rs) == 0 {
+		return []CanonicalRecord{}, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil, errors.New("store: closed")
+	}
+
+	// Pass 1: pre-validate ALL records against a projected index.
+	// This ensures batch[i]'s revision/supersedes reflects batch[0..i-1].
+	projected := make(map[string]IndexEntry, len(s.idx.Entries)+len(rs))
+	for k, v := range s.idx.Entries {
+		projected[k] = v
+	}
+
+	completed := make([]CanonicalRecord, len(rs))
+	for i, r := range rs {
+		var err error
+		completed[i], projected, err = computeAppendFields(r, projected, s.ulid)
+		if err != nil {
+			return nil, fmt.Errorf("batch[%d]: %w", i, err)
+		}
+	}
+
+	// Pass 2: write all records through buffer (no error expected after validation).
+	offsets := make([]int64, len(completed))
+	for i, r := range completed {
+		offsets[i] = s.fileSize() + int64(s.w.Buffered())
+		data, err := json.Marshal(r)
+		if err != nil {
+			return nil, fmt.Errorf("batch marshal[%d]: %w", i, err)
+		}
+		data = append(data, '\n')
+		if _, err := s.w.Write(data); err != nil {
+			return nil, fmt.Errorf("batch write[%d]: %w", i, err)
+		}
+	}
+
+	// Single flush + fsync.
+	if err := s.w.Flush(); err != nil {
+		return nil, fmt.Errorf("AppendBatch: flush: %w", err)
+	}
+	if err := s.f.Sync(); err != nil {
+		return nil, fmt.Errorf("AppendBatch: sync: %w", err)
+	}
+
+	// Update real index and persist.
+	for i, r := range completed {
+		entry := projected[r.CanonicalID]
+		entry.LatestLineOffset = offsets[i]
+		s.idx.Entries[r.CanonicalID] = entry
+	}
+
+	fp, err := computeFingerprint(s.f.Name())
+	if err != nil {
+		return nil, fmt.Errorf("AppendBatch: fingerprint: %w", err)
+	}
+	lc, err := countLines(s.f.Name())
+	if err != nil {
+		return nil, fmt.Errorf("AppendBatch: countLines: %w", err)
+	}
+	s.idx.SourceFingerprint = fp
+	s.idx.LastLineCount = lc
+	s.idx.BuiltAt = time.Now().UTC().Format(time.RFC3339Nano)
+
+	idxPath := filepath.Join(s.rootDir, indexFilename)
+	if err := s.idx.persist(idxPath); err != nil {
+		return nil, fmt.Errorf("AppendBatch: persist index: %w", err)
+	}
+	s.dirty = false
+
+	return completed, nil
 }
 
 // isClosed reports whether the store has been closed. Useful for tests.
