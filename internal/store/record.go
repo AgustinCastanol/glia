@@ -35,15 +35,15 @@ type Origin struct {
 }
 
 // rawRecord is the minimal decode used to gate by schema_version
-// before full unmarshalling (REQ-READ-03).
+// before full unmarshalling (REQ-READ-03). The second pass re-unmarshals
+// from the original data bytes directly.
 type rawRecord struct {
-	SchemaVersion int             `json:"schema_version"`
-	CanonicalID   string          `json:"canonical_id"`
-	LineULID      string          `json:"line_ulid"`
-	Revision      int             `json:"revision"`
-	UpdatedAt     string          `json:"updated_at"`
-	Deleted       bool            `json:"deleted"`
-	raw           json.RawMessage // retained for second pass
+	SchemaVersion int    `json:"schema_version"`
+	CanonicalID   string `json:"canonical_id"`
+	LineULID      string `json:"line_ulid"`
+	Revision      int    `json:"revision"`
+	UpdatedAt     string `json:"updated_at"`
+	Deleted       bool   `json:"deleted"`
 }
 
 var validKinds = map[string]bool{
