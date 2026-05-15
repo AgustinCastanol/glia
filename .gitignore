@@ -1,0 +1,11 @@
+# Go build artifacts
+*.test
+*.out
+/bin/
+/dist/
+
+# wrapper-mems local cache (per PRD-0: index.json is gitignored, memory.jsonl is committed)
+.wrapper-mems/index.json
+
+# OS / editor
+.DS_Store
