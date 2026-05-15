@@ -3,6 +3,7 @@ module github.com/agustincastanol/wrapper-mems
 go 1.26.1
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/gofrs/flock v0.13.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stretchr/testify v1.11.1
