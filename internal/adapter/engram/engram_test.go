@@ -220,6 +220,42 @@ func TestListNative_PersonalScopeFiltered(t *testing.T) {
 	}
 }
 
+// W-02 regression: a record whose updated_at is exactly the `since` boundary
+// (a whole-second timestamp) MUST be included. Before the fix, `sinceStr` used
+// time.RFC3339Nano which truncates trailing zeros, rendering a whole-second
+// `since` as "...T10:00:00Z" while the normalized record is
+// "...T10:00:00.000000000Z". Lexicographically '.' < 'Z', so the boundary
+// record was wrongly dropped from incremental syncs.
+func TestListNative_SinceBoundary_WholeSecond_Included(t *testing.T) {
+	results := []map[string]interface{}{
+		{"id": "obs-at-boundary", "scope": "project", "updated_at": "2026-05-16T10:00:00.000000000Z"},
+		{"id": "obs-before", "scope": "project", "updated_at": "2026-05-16T09:59:59.999999999Z"},
+	}
+	data, _ := json.Marshal(results)
+
+	cmd := &fakeCommander{
+		runs: map[string]fakeCommandRun{
+			"search": {stdout: data},
+		},
+	}
+	a := engram.New(cmd, nil)
+
+	// Whole-second `since` exactly equal to the boundary record's updated_at.
+	since := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	ids, err := a.ListNative(context.Background(), "testproject", since)
+	if err != nil {
+		t.Fatalf("ListNative error: %v", err)
+	}
+
+	var got []string
+	for _, id := range ids {
+		got = append(got, string(id))
+	}
+	if len(got) != 1 || got[0] != "obs-at-boundary" {
+		t.Errorf("expected exactly [obs-at-boundary] (record AT the since boundary kept, earlier record dropped), got %v", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // S-04: WriteNative idempotence — existing provider_id → update path
 // ---------------------------------------------------------------------------

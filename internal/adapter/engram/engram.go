@@ -183,7 +183,12 @@ func (a *EngramAdapter) ListNative(ctx context.Context, project string, since ti
 		log.Printf("engram adapter: ListNative returned 1000 records for project %q; pagination not supported in v1 — some records may be missing", project)
 	}
 
-	sinceStr := since.UTC().Format(time.RFC3339Nano)
+	// Must use rfc3339NanoFixed (not time.RFC3339Nano): the latter truncates
+	// trailing zero nanoseconds, so a whole-second `since` would render as
+	// "...T10:00:00Z" while normalized records render as "...T10:00:00.000000000Z".
+	// Lexicographically '.' (46) < 'Z' (90), so records exactly at the `since`
+	// boundary would be wrongly dropped from incremental syncs (W-02).
+	sinceStr := since.UTC().Format(rfc3339NanoFixed)
 
 	var ids []adapter.NativeID
 	for _, r := range results {
