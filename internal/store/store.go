@@ -513,7 +513,11 @@ func (s *Store) AppendBatch(rs []CanonicalRecord) ([]CanonicalRecord, error) {
 }
 
 // providerIDMap is a snapshot view of ByProvider[provider] at a point in time.
-// It structurally satisfies adapter.IDMap without importing internal/adapter.
+// It uses plain string keys and does NOT directly satisfy adapter.IDMap, whose
+// methods use the named types adapter.NativeID/adapter.CanonicalID (named string
+// types are not interface-assignable to string). The engram adapter wraps this
+// snapshot in a thin boundary adapter that casts string<->named types, keeping
+// internal/store free of any internal/adapter import (CON-01).
 type providerIDMap struct {
 	forward map[string]string // nativeID -> canonicalID
 	reverse map[string]string // canonicalID -> nativeID (built lazily on first use)
