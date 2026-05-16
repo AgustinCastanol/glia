@@ -38,12 +38,19 @@ type Origin struct {
 // before full unmarshalling (REQ-READ-03). The second pass re-unmarshals
 // from the original data bytes directly.
 type rawRecord struct {
-	SchemaVersion int    `json:"schema_version"`
-	CanonicalID   string `json:"canonical_id"`
-	LineULID      string `json:"line_ulid"`
-	Revision      int    `json:"revision"`
-	UpdatedAt     string `json:"updated_at"`
-	Deleted       bool   `json:"deleted"`
+	SchemaVersion int        `json:"schema_version"`
+	CanonicalID   string     `json:"canonical_id"`
+	LineULID      string     `json:"line_ulid"`
+	Revision      int        `json:"revision"`
+	UpdatedAt     string     `json:"updated_at"`
+	Deleted       bool       `json:"deleted"`
+	Origin        rawOrigin  `json:"origin"`
+}
+
+// rawOrigin is the minimal origin decode used during rebuild to populate ByProvider.
+type rawOrigin struct {
+	Provider   string `json:"provider"`
+	ProviderID string `json:"provider_id"`
 }
 
 var validKinds = map[string]bool{
