@@ -137,6 +137,43 @@ func TestComputeFingerprint_ShortFileLessThan4096(t *testing.T) {
 	assert.Len(t, fp, 16) // xxh64 = 8 bytes = 16 hex chars
 }
 
+// S-10: legacy index.json with no by_provider key → ByProvider is non-nil after loadIndex.
+func TestLoadIndex_LegacyNoByProvider_InitializesNonNil(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.json")
+	// Simulate a PRD-0 index.json that has no by_provider field.
+	legacy := `{"schema_version":1,"source_fingerprint":"abc","last_line_count":1,"built_at":"2024-01-01T00:00:00Z","entries":{}}`
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0644))
+
+	idx, err := loadIndex(path)
+	require.NoError(t, err)
+	assert.NotNil(t, idx.ByProvider, "ByProvider must be non-nil even when absent from JSON")
+	assert.Empty(t, idx.ByProvider, "ByProvider must be empty (not nil) for a legacy index")
+}
+
+// S-11: store with no engram-origin records → ProviderIDMap("engram") is non-nil,
+// lookups return ("", false) without panicking.
+func TestProviderIDMap_UnknownProvider_NonNilAndFalse(t *testing.T) {
+	dir := t.TempDir()
+	// Write an empty memory.jsonl so Open succeeds.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.jsonl"), []byte{}, 0644))
+
+	s, err := Open(dir)
+	require.NoError(t, err)
+	defer s.Close()
+
+	idmap := s.ProviderIDMap("engram")
+	assert.NotNil(t, idmap, "ProviderIDMap must never return nil")
+
+	canonID, ok := idmap.CanonicalFromNative("any-id")
+	assert.False(t, ok, "CanonicalFromNative must return false for unknown provider")
+	assert.Empty(t, canonID)
+
+	nativeID, ok := idmap.NativeFromCanonical("any-canonical")
+	assert.False(t, ok, "NativeFromCanonical must return false for unknown provider")
+	assert.Empty(t, nativeID)
+}
+
 func TestComputeFingerprint_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.jsonl")

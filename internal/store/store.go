@@ -512,6 +512,47 @@ func (s *Store) AppendBatch(rs []CanonicalRecord) ([]CanonicalRecord, error) {
 	return completed, nil
 }
 
+// providerIDMap is a snapshot view of ByProvider[provider] at a point in time.
+// It structurally satisfies adapter.IDMap without importing internal/adapter.
+type providerIDMap struct {
+	forward map[string]string // nativeID -> canonicalID
+	reverse map[string]string // canonicalID -> nativeID (built lazily on first use)
+}
+
+// CanonicalFromNative returns the canonical ID for the given native provider ID.
+func (m *providerIDMap) CanonicalFromNative(nativeID string) (string, bool) {
+	v, ok := m.forward[nativeID]
+	return v, ok
+}
+
+// NativeFromCanonical returns the native provider ID for the given canonical ID.
+func (m *providerIDMap) NativeFromCanonical(canonicalID string) (string, bool) {
+	if m.reverse == nil {
+		m.reverse = make(map[string]string, len(m.forward))
+		for k, v := range m.forward {
+			m.reverse[v] = k
+		}
+	}
+	v, ok := m.reverse[canonicalID]
+	return v, ok
+}
+
+// ProviderIDMap returns a read-only snapshot view of the ID mapping for provider.
+// If provider is unknown, a non-nil IDMap is returned that returns false for all lookups.
+// Safe for concurrent use; acquires a read lock for the snapshot only.
+func (s *Store) ProviderIDMap(provider string) *providerIDMap {
+	s.mu.RLock()
+	inner := s.idx.ByProvider[provider] // nil if provider unknown
+	s.mu.RUnlock()
+
+	// Copy the inner map to avoid holding a reference to the live index.
+	snapshot := make(map[string]string, len(inner))
+	for k, v := range inner {
+		snapshot[k] = v
+	}
+	return &providerIDMap{forward: snapshot}
+}
+
 // isClosed reports whether the store has been closed. Useful for tests.
 func (s *Store) isClosed() bool {
 	s.mu.RLock()

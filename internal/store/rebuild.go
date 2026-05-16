@@ -47,7 +47,16 @@ func rebuildFromFile(path string) (*index, error) {
 	}
 	defer f.Close()
 
+	// candidateOrigins tracks the origin for each canonical_id line (last write wins
+	// per canonical_id; safe because canonical_id is stable across revisions).
+	type originEntry struct {
+		provider   string
+		providerID string
+		deleted    bool
+	}
 	candidates := make(map[string][]lineCandidate)
+	origins := make(map[string]originEntry)
+
 	scanner := bufio.NewScanner(f)
 	buf := make([]byte, 1024*1024) // 1 MB max token
 	scanner.Buffer(buf, len(buf))
@@ -84,6 +93,23 @@ func rebuildFromFile(path string) (*index, error) {
 			lineULID:  rr.LineULID,
 			deleted:   rr.Deleted,
 		})
+
+		// Track origin for ByProvider population; every line updates so the
+		// winning revision's origin (last-wins) is what we record.
+		if rr.Origin.Provider != "" && rr.Origin.ProviderID != "" {
+			origins[rr.CanonicalID] = originEntry{
+				provider:   rr.Origin.Provider,
+				providerID: rr.Origin.ProviderID,
+				deleted:    rr.Deleted,
+			}
+		} else if rr.Deleted {
+			// Tombstone with no origin — still marks canonical_id as deleted.
+			if oe, ok := origins[rr.CanonicalID]; ok {
+				oe.deleted = true
+				origins[rr.CanonicalID] = oe
+			}
+		}
+
 		offset += lineLen
 		lineCount++
 	}
@@ -104,6 +130,18 @@ func rebuildFromFile(path string) (*index, error) {
 		}
 	}
 
+	// Build ByProvider from origins: only include live (non-deleted) mappings.
+	byProvider := make(map[string]map[string]string)
+	for cid, oe := range origins {
+		if oe.deleted {
+			continue
+		}
+		if _, ok := byProvider[oe.provider]; !ok {
+			byProvider[oe.provider] = make(map[string]string)
+		}
+		byProvider[oe.provider][oe.providerID] = cid
+	}
+
 	fp, err := computeFingerprint(path)
 	if err != nil {
 		return nil, fmt.Errorf("rebuild: fingerprint: %w", err)
@@ -115,6 +153,7 @@ func rebuildFromFile(path string) (*index, error) {
 		LastLineCount:     lineCount,
 		BuiltAt:           time.Now().UTC().Format(time.RFC3339Nano),
 		Entries:           entries,
+		ByProvider:        byProvider,
 	}, nil
 }
 

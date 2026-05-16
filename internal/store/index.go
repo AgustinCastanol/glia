@@ -23,11 +23,12 @@ type IndexEntry struct {
 
 // index is the on-disk + in-memory cache. Persisted as index.json.
 type index struct {
-	SchemaVersion     int                   `json:"schema_version"`
-	SourceFingerprint string                `json:"source_fingerprint"`
-	LastLineCount     int                   `json:"last_line_count"`
-	BuiltAt           string                `json:"built_at"`
-	Entries           map[string]IndexEntry `json:"entries"`
+	SchemaVersion     int                              `json:"schema_version"`
+	SourceFingerprint string                           `json:"source_fingerprint"`
+	LastLineCount     int                              `json:"last_line_count"`
+	BuiltAt           string                           `json:"built_at"`
+	Entries           map[string]IndexEntry            `json:"entries"`
+	ByProvider        map[string]map[string]string     `json:"by_provider,omitempty"`
 }
 
 // loadIndex reads and deserializes index.json from path.
@@ -42,6 +43,9 @@ func loadIndex(path string) (*index, error) {
 	}
 	if idx.Entries == nil {
 		idx.Entries = make(map[string]IndexEntry)
+	}
+	if idx.ByProvider == nil {
+		idx.ByProvider = make(map[string]map[string]string)
 	}
 	return &idx, nil
 }
