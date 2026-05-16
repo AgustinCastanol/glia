@@ -36,6 +36,11 @@ func (p *panicTransport) GetByID(_ context.Context, id adapter.NativeID) (engram
 	return engram.EngramRecord{}, nil
 }
 
+func (p *panicTransport) Export(_ context.Context) ([]byte, error) {
+	p.t.Fatal("pure function must not call Transport.Export")
+	return nil, nil
+}
+
 // fakeCommander returns canned responses keyed by the first arg.
 type fakeCommander struct {
 	runs map[string]fakeCommandRun
@@ -70,10 +75,13 @@ func (b *blockingCommander) Run(ctx context.Context, args ...string) ([]byte, []
 	return nil, nil, ctx.Err()
 }
 
-// fakeTransport returns canned responses by NativeID.
+// fakeTransport returns canned responses by NativeID, and optionally a canned
+// export body for the Export() method.
 type fakeTransport struct {
-	records map[adapter.NativeID]engram.EngramRecord
-	err     map[adapter.NativeID]error
+	records    map[adapter.NativeID]engram.EngramRecord
+	err        map[adapter.NativeID]error
+	exportBody []byte
+	exportErr  error
 }
 
 func (f *fakeTransport) GetByID(_ context.Context, id adapter.NativeID) (engram.EngramRecord, error) {
@@ -84,6 +92,17 @@ func (f *fakeTransport) GetByID(_ context.Context, id adapter.NativeID) (engram.
 		return rec, nil
 	}
 	return engram.EngramRecord{}, adapter.ErrNotFound
+}
+
+func (f *fakeTransport) Export(_ context.Context) ([]byte, error) {
+	if f.exportErr != nil {
+		return nil, f.exportErr
+	}
+	if f.exportBody != nil {
+		return f.exportBody, nil
+	}
+	// Default: empty export with no observations.
+	return []byte(`{"observations":[]}`), nil
 }
 
 // fakeIDMap is a simple in-memory IDMap for tests.
@@ -186,23 +205,27 @@ func TestFromCanonical_Purity_NoProviderCalls(t *testing.T) {
 	}
 }
 
+// buildExportBody builds a fake GET /export JSON body with the given observations.
+// Timestamps use the SQLite format "2006-01-02 15:04:05" as returned by the real daemon.
+func buildExportBody(obs []map[string]interface{}) []byte {
+	payload := map[string]interface{}{"observations": obs}
+	b, _ := json.Marshal(payload)
+	return b
+}
+
 // ---------------------------------------------------------------------------
-// S-03: Personal-scope filtering in ListNative
+// S-03: Personal-scope filtering in ListNative (DEFECT-LN-01 fix — Export path)
 // ---------------------------------------------------------------------------
 func TestListNative_PersonalScopeFiltered(t *testing.T) {
-	mixed := []map[string]interface{}{
-		{"id": "obs-proj-1", "scope": "project", "updated_at": "2026-05-16T04:00:00.000000000Z"},
-		{"id": "obs-pers-1", "scope": "personal", "updated_at": "2026-05-16T04:00:00.000000000Z"},
-		{"id": "obs-proj-2", "scope": "project", "updated_at": "2026-05-16T04:00:00.000000000Z"},
+	// Export timestamps use SQLite datetime format: "2006-01-02 15:04:05" UTC.
+	exportObs := []map[string]interface{}{
+		{"sync_id": "obs-proj-1", "project": "testproject", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
+		{"sync_id": "obs-pers-1", "project": "testproject", "scope": "personal", "updated_at": "2026-05-16 04:00:00"},
+		{"sync_id": "obs-proj-2", "project": "testproject", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
 	}
-	data, _ := json.Marshal(mixed)
 
-	cmd := &fakeCommander{
-		runs: map[string]fakeCommandRun{
-			"search": {stdout: data},
-		},
-	}
-	a := engram.New(cmd, nil)
+	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
+	a := engram.New(&fakeCommander{}, tr)
 
 	since := time.Time{}
 	ids, err := a.ListNative(context.Background(), "testproject", since)
@@ -221,24 +244,20 @@ func TestListNative_PersonalScopeFiltered(t *testing.T) {
 }
 
 // W-02 regression: a record whose updated_at is exactly the `since` boundary
-// (a whole-second timestamp) MUST be included. Before the fix, `sinceStr` used
-// time.RFC3339Nano which truncates trailing zeros, rendering a whole-second
-// `since` as "...T10:00:00Z" while the normalized record is
-// "...T10:00:00.000000000Z". Lexicographically '.' < 'Z', so the boundary
-// record was wrongly dropped from incremental syncs.
+// (a whole-second timestamp) MUST be included. The Export path normalizes the
+// SQLite "2006-01-02 15:04:05" timestamps to rfc3339NanoFixed before comparing,
+// and sinceStr also uses rfc3339NanoFixed — so whole-second boundaries align.
+//
+// This test exercises the Export-based ListNative (DEFECT-LN-01 fix path).
 func TestListNative_SinceBoundary_WholeSecond_Included(t *testing.T) {
-	results := []map[string]interface{}{
-		{"id": "obs-at-boundary", "scope": "project", "updated_at": "2026-05-16T10:00:00.000000000Z"},
-		{"id": "obs-before", "scope": "project", "updated_at": "2026-05-16T09:59:59.999999999Z"},
+	// Export timestamps: "2006-01-02 15:04:05" UTC (SQLite format, no nanoseconds).
+	exportObs := []map[string]interface{}{
+		{"sync_id": "obs-at-boundary", "project": "testproject", "scope": "project", "updated_at": "2026-05-16 10:00:00"},
+		{"sync_id": "obs-before", "project": "testproject", "scope": "project", "updated_at": "2026-05-16 09:59:59"},
 	}
-	data, _ := json.Marshal(results)
 
-	cmd := &fakeCommander{
-		runs: map[string]fakeCommandRun{
-			"search": {stdout: data},
-		},
-	}
-	a := engram.New(cmd, nil)
+	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
+	a := engram.New(&fakeCommander{}, tr)
 
 	// Whole-second `since` exactly equal to the boundary record's updated_at.
 	since := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
@@ -253,6 +272,50 @@ func TestListNative_SinceBoundary_WholeSecond_Included(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "obs-at-boundary" {
 		t.Errorf("expected exactly [obs-at-boundary] (record AT the since boundary kept, earlier record dropped), got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListNative (Export path): cross-project filtering — only requested project IDs
+// ---------------------------------------------------------------------------
+func TestListNative_CrossProjectFiltered(t *testing.T) {
+	// Export contains observations from multiple projects; only "myproject" requested.
+	exportObs := []map[string]interface{}{
+		{"sync_id": "obs-mine-1", "project": "myproject", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
+		{"sync_id": "obs-other-1", "project": "otherproject", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
+		{"sync_id": "obs-mine-2", "project": "myproject", "scope": "project", "updated_at": "2026-05-16 05:00:00"},
+		{"sync_id": "obs-other-2", "project": "thirdproject", "scope": "project", "updated_at": "2026-05-16 06:00:00"},
+	}
+
+	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
+	a := engram.New(&fakeCommander{}, tr)
+
+	ids, err := a.ListNative(context.Background(), "myproject", time.Time{})
+	if err != nil {
+		t.Fatalf("ListNative error: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Errorf("expected 2 IDs for myproject, got %d: %v", len(ids), ids)
+	}
+	for _, id := range ids {
+		if string(id) != "obs-mine-1" && string(id) != "obs-mine-2" {
+			t.Errorf("unexpected ID in result: %q", id)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListNative (Export path): ErrUnavailable when daemon is unreachable
+// ---------------------------------------------------------------------------
+func TestListNative_DaemonDown_ErrUnavailable(t *testing.T) {
+	tr := &fakeTransport{
+		exportErr: fmt.Errorf("%w: connection refused", adapter.ErrUnavailable),
+	}
+	a := engram.New(&fakeCommander{}, tr)
+
+	_, err := a.ListNative(context.Background(), "testproject", time.Time{})
+	if !errors.Is(err, adapter.ErrUnavailable) {
+		t.Errorf("expected ErrUnavailable when daemon down, got %v", err)
 	}
 }
 
@@ -384,6 +447,11 @@ func (h *httpTestTransport) GetByID(ctx context.Context, id adapter.NativeID) (e
 	var rec engram.EngramRecord
 	json.NewDecoder(resp.Body).Decode(&rec)
 	return rec, nil
+}
+
+func (h *httpTestTransport) Export(_ context.Context) ([]byte, error) {
+	// Not used in S-06 test; return empty export.
+	return []byte(`{"observations":[]}`), nil
 }
 
 // ---------------------------------------------------------------------------
