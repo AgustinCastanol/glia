@@ -152,6 +152,7 @@ func (a *EngramAdapter) Health(ctx context.Context) error {
 }
 
 // engramSearchResult is the JSON structure returned by "engram search".
+// Used by ReadNative (CLI path) only — ListNative now uses the Export path.
 type engramSearchResult struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
@@ -165,43 +166,102 @@ type engramSearchResult struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-// ListNative returns all project-scoped native IDs updated at or after since
-// (REQ-ENG-11, REQ-ENG-12, REQ-ENG-13). Personal-scope records are filtered out
-// (REQ-AC-07).
-func (a *EngramAdapter) ListNative(ctx context.Context, project string, since time.Time) ([]adapter.NativeID, error) {
-	stdout, _, err := a.commander.Run(ctx, "search", "", "--project", project, "--limit", "1000", "--scope", "project")
+// exportResponse is the top-level JSON structure returned by GET /export.
+// Timestamps in the export use SQLite datetime format: "2006-01-02 15:04:05" (UTC, no T/Z).
+type exportResponse struct {
+	Observations []exportObservation `json:"observations"`
+}
+
+// exportObservation is a single observation entry in the GET /export response.
+// The `id` field is an integer database ID; `sync_id` is the stable string NativeID.
+// Timestamps are "2006-01-02 15:04:05" UTC (no T separator, no Z suffix).
+type exportObservation struct {
+	SyncID    string `json:"sync_id"`
+	SessionID string `json:"session_id"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	Project   string `json:"project"`
+	Scope     string `json:"scope"`
+	TopicKey  string `json:"topic_key"`
+	CreatedAt string `json:"created_at"` // "2006-01-02 15:04:05" UTC
+	UpdatedAt string `json:"updated_at"` // "2006-01-02 15:04:05" UTC
+}
+
+// exportDatetimeLayout is the timestamp format used by GET /export responses.
+// engram v1 stores timestamps as SQLite datetimes: space-separated, no T, no Z suffix,
+// implicitly UTC. This differs from the RFC3339Nano format used in CLI search output.
+const exportDatetimeLayout = "2006-01-02 15:04:05"
+
+// parseExportTimestamp parses an export timestamp ("2006-01-02 15:04:05", UTC)
+// and normalizes it to rfc3339NanoFixed for byte-comparable string comparison
+// (REQ-TS-03).
+func parseExportTimestamp(ts string) (string, error) {
+	if ts == "" {
+		return "", nil
+	}
+	t, err := time.Parse(exportDatetimeLayout, ts)
 	if err != nil {
-		return nil, fmt.Errorf("%w: engram search: %v", adapter.ErrUnavailable, err)
+		return "", fmt.Errorf("parseExportTimestamp: cannot parse %q: %w", ts, err)
+	}
+	return t.UTC().Format(rfc3339NanoFixed), nil
+}
+
+// ListNative returns all project-scoped native IDs updated at or after since.
+// DEFECT-LN-01 fix: uses GET /export via Transport instead of the CLI "search" path,
+// which rejected empty queries in engram v1.15. The export endpoint provides
+// deterministic full enumeration; results are filtered client-side by project,
+// scope, and updated_at >= since (REQ-ENG-11, REQ-ENG-12, REQ-ENG-13, REQ-AC-07).
+func (a *EngramAdapter) ListNative(ctx context.Context, project string, since time.Time) ([]adapter.NativeID, error) {
+	if a.transport == nil {
+		return nil, fmt.Errorf("%w: ListNative requires a Transport (nil provided)", adapter.ErrUnsupported)
 	}
 
-	var results []engramSearchResult
-	if err := json.Unmarshal(stdout, &results); err != nil {
-		return nil, fmt.Errorf("list: parse engram search output: %w", err)
+	body, err := a.transport.Export(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: ListNative export: %v", adapter.ErrUnavailable, err)
 	}
 
-	if len(results) >= 1000 {
-		log.Printf("engram adapter: ListNative returned 1000 records for project %q; pagination not supported in v1 — some records may be missing", project)
+	var export exportResponse
+	if err := json.Unmarshal(body, &export); err != nil {
+		return nil, fmt.Errorf("ListNative: parse export response: %w", err)
 	}
 
-	// Must use rfc3339NanoFixed (not time.RFC3339Nano): the latter truncates
-	// trailing zero nanoseconds, so a whole-second `since` would render as
-	// "...T10:00:00Z" while normalized records render as "...T10:00:00.000000000Z".
-	// Lexicographically '.' (46) < 'Z' (90), so records exactly at the `since`
-	// boundary would be wrongly dropped from incremental syncs (W-02).
+	if len(export.Observations) >= 1000 {
+		log.Printf("engram adapter: ListNative export returned %d observations (>= 1000); pagination not supported in v1 — some records may be missing", len(export.Observations))
+	}
+
+	// Format since using rfc3339NanoFixed for byte-comparable string comparison.
+	// W-02 invariant: must use rfc3339NanoFixed (not time.RFC3339Nano) so that
+	// whole-second boundaries render as "...T10:00:00.000000000Z" and match the
+	// normalized export timestamps (lexicographic '.' < 'Z' means truncated form
+	// would wrongly exclude boundary records from incremental syncs).
 	sinceStr := since.UTC().Format(rfc3339NanoFixed)
 
 	var ids []adapter.NativeID
-	for _, r := range results {
-		// Defensive double-filter: drop personal-scope records even if the CLI
-		// returns them despite --scope project (REQ-AC-07, REQ-ENG-11).
-		if r.Scope == "personal" {
+	for _, obs := range export.Observations {
+		// Filter to the requested project.
+		if obs.Project != project {
 			continue
 		}
-		// Filter by updated_at >= since via string comparison (REQ-ENG-12, REQ-TS-03).
-		if r.UpdatedAt < sinceStr {
+		// REQ-AC-07, REQ-ENG-11: defensive double-filter — drop personal-scope records
+		// even if they appear in the export alongside project-scope ones.
+		if obs.Scope == "personal" {
 			continue
 		}
-		ids = append(ids, adapter.NativeID(r.ID))
+		// Normalize the export timestamp from SQLite datetime to rfc3339NanoFixed
+		// so it is byte-comparable with sinceStr (REQ-TS-03, REQ-ENG-12).
+		normalizedUpdatedAt, err := parseExportTimestamp(obs.UpdatedAt)
+		if err != nil {
+			log.Printf("engram adapter: ListNative: skipping obs %q with unparseable updated_at %q: %v", obs.SyncID, obs.UpdatedAt, err)
+			continue
+		}
+		// Filter by updated_at >= since (REQ-ENG-12). String comparison is valid
+		// because both sinceStr and normalizedUpdatedAt are in rfc3339NanoFixed format.
+		if normalizedUpdatedAt < sinceStr {
+			continue
+		}
+		ids = append(ids, adapter.NativeID(obs.SyncID))
 	}
 	return ids, nil
 }

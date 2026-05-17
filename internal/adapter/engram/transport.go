@@ -11,17 +11,25 @@ import (
 	"github.com/agustincastanol/wrapper-mems/internal/adapter"
 )
 
-// Transport abstracts the HTTP fallback for ReadNative so that unit tests can
-// inject a fake without requiring an engram daemon to be running.
+// Transport abstracts the HTTP calls to the engram daemon so that unit tests
+// can inject a fake without requiring a real daemon to be running.
 //
-// The HTTP path is used only when the CLI path cannot find a record by sync_id.
+// GetByID is used by ReadNative (HTTP fallback when CLI path cannot find a record).
+// Export is used by ListNative (GET /export for deterministic enumeration —
+// DEFECT-LN-01 fix; engram CLI v1.15 rejects empty search queries).
+//
 // A nil Transport causes ReadNative to return adapter.ErrUnsupported at the
-// HTTP fallback step.
+// HTTP fallback step. ListNative requires a non-nil Transport.
 type Transport interface {
 	// GetByID fetches the engram observation with the given native ID via HTTP.
 	// Returns adapter.ErrNotFound on 404, adapter.ErrUnavailable on connection
 	// errors/timeouts/non-2xx server errors.
 	GetByID(ctx context.Context, id adapter.NativeID) (EngramRecord, error)
+
+	// Export fetches the full export dump via GET /export and returns the raw
+	// JSON body. Returns adapter.ErrUnavailable when the daemon is unreachable.
+	// Used by ListNative for deterministic project-scoped enumeration.
+	Export(ctx context.Context) ([]byte, error)
 }
 
 // httpTransport is the production Transport that hits http://127.0.0.1:7437.
@@ -38,6 +46,43 @@ func NewHTTPTransport() Transport {
 		client:  &http.Client{},
 		baseURL: "http://127.0.0.1:7437",
 	}
+}
+
+// Export performs GET /export against the engram daemon and returns the raw JSON
+// body. Maps connection/daemon-down errors to adapter.ErrUnavailable.
+// The export response has the shape:
+//
+//	{ "version": "...", "exported_at": "...", "sessions": [...], "observations": [...] }
+//
+// where observations is a flat array of all observations across all projects.
+// Each observation has fields: id (int), sync_id (string), session_id, type, title,
+// content, project, scope, topic_key, revision_count, duplicate_count, last_seen_at,
+// created_at, updated_at. Timestamps are in "2006-01-02 15:04:05" UTC format (no T/Z).
+func (t *httpTransport) Export(ctx context.Context) ([]byte, error) {
+	url := t.baseURL + "/export"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: build export request: %v", adapter.ErrUnavailable, err)
+	}
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: http get /export: %v", adapter.ErrUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%w: /export unexpected status %d", adapter.ErrUnavailable, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read /export body: %v", adapter.ErrUnavailable, err)
+	}
+	return body, nil
 }
 
 // GetByID performs GET /observations/:id against the engram daemon and maps
