@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agustincastanol/wrapper-mems/internal/adapter"
 	"github.com/agustincastanol/wrapper-mems/internal/store"
@@ -823,6 +824,518 @@ func toCanonicalOrFatal(t *testing.T, a *ClaudeMemAdapter, rec claudeMemRecord, 
 		t.Fatalf("ToCanonical unexpectedly failed: %v", err)
 	}
 	return got
+}
+
+// ---------------------------------------------------------------------------
+// PR#3 unit tests (T-15)
+// Covers: Health (nil transport, happy path, ErrUnavailable wrap, ctx cancel),
+//         ListNative (3-page pagination Scenario D, since filter Scenario E,
+//         cross-project isolation Scenario G, timestamp normalization Scenario H,
+//         unparseable updated_at skipped+warn, context cancellation),
+//         ReadNative (happy per-ID, degrade-to-scan on ErrUnavailable,
+//         clean-404 → ErrNotFound, scan-exhausted → ErrNotFound).
+// All tests use fakeTransport — NO network, NO time flakiness.
+// ---------------------------------------------------------------------------
+
+// fakeTransport is a configurable fake Transport for PR#3 I/O method testing.
+// It supports scripted multi-page responses and toggleable GetByID behaviour.
+type fakeTransport struct {
+	// healthErr, if non-nil, is returned by Health.
+	healthErr error
+
+	// pages is the ordered list of page bodies returned by successive ListPage
+	// calls. The i-th call returns pages[i]. If the index is out of range,
+	// ListPage returns an error.
+	pages []observationsPage
+
+	// listPageErr, if non-nil, overrides pages and is returned on every ListPage call.
+	listPageErr error
+
+	// listPageCalls records the (limit, offset) pairs each ListPage call used.
+	listPageCalls [][2]int
+
+	// getByIDBody is returned by GetByID when getByIDFound is true.
+	getByIDBody []byte
+	// getByIDFound controls whether GetByID returns (body, true, nil).
+	getByIDFound bool
+	// getByIDErr, if non-nil, is returned by GetByID instead.
+	getByIDErr error
+	// getByIDReceivedID records the id argument passed to the most recent GetByID call.
+	getByIDReceivedID string
+}
+
+// Compile-time assertion: fakeTransport must satisfy Transport.
+var _ Transport = (*fakeTransport)(nil)
+
+func (f *fakeTransport) Health(_ context.Context) error {
+	return f.healthErr
+}
+
+func (f *fakeTransport) ListPage(_ context.Context, limit, offset int) ([]byte, error) {
+	f.listPageCalls = append(f.listPageCalls, [2]int{limit, offset})
+	if f.listPageErr != nil {
+		return nil, f.listPageErr
+	}
+	// Determine page index from offset (pages are always pageLimit=100 apart).
+	idx := offset / 100
+	if idx >= len(f.pages) {
+		return nil, fmt.Errorf("%w: fakeTransport: no page at offset %d", adapter.ErrUnavailable, offset)
+	}
+	b, err := json.Marshal(f.pages[idx])
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func (f *fakeTransport) GetByID(_ context.Context, id string) ([]byte, bool, error) {
+	f.getByIDReceivedID = id
+	if f.getByIDErr != nil {
+		return nil, false, f.getByIDErr
+	}
+	if f.getByIDFound {
+		return f.getByIDBody, true, nil
+	}
+	return nil, false, adapter.ErrNotFound
+}
+
+// makeRawItem encodes a claudeMemRecord as a json.RawMessage for use in fakeTransport pages.
+func makeRawItem(id, projectID, updatedAt string) json.RawMessage {
+	b, _ := json.Marshal(claudeMemRecord{
+		ID:        id,
+		ProjectID: projectID,
+		Title:     "title-" + id,
+		Summary:   "summary-" + id,
+		UpdatedAt: updatedAt,
+		CreatedAt: "2026-05-16T10:00:00Z",
+	})
+	return b
+}
+
+// ---------------------------------------------------------------------------
+// Health tests (T-12)
+// ---------------------------------------------------------------------------
+
+// TestHealth_NilTransport_ErrUnavailable verifies nil transport returns ErrUnavailable.
+func TestHealth_NilTransport_ErrUnavailable(t *testing.T) {
+	a := New(nil)
+	err := a.Health(context.Background())
+	if !isUnavailable(err) {
+		t.Fatalf("expected ErrUnavailable for nil transport, got %v", err)
+	}
+}
+
+// TestHealth_OK verifies nil error from transport → nil returned (Scenario F happy path).
+func TestHealth_OK(t *testing.T) {
+	a := New(&fakeTransport{healthErr: nil})
+	if err := a.Health(context.Background()); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
+// TestHealth_TransportError_WrapsErrUnavailable verifies Scenario F: transport
+// failure is wrapped as ErrUnavailable.
+func TestHealth_TransportError_WrapsErrUnavailable(t *testing.T) {
+	a := New(&fakeTransport{healthErr: fmt.Errorf("%w: connection refused", adapter.ErrUnavailable)})
+	err := a.Health(context.Background())
+	if !isUnavailable(err) {
+		t.Fatalf("expected ErrUnavailable, got %v", err)
+	}
+}
+
+// TestHealth_ContextCancelled_Propagates verifies context cancellation propagates raw.
+func TestHealth_ContextCancelled_Propagates(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+	a := New(&fakeTransport{healthErr: context.Canceled})
+	err := a.Health(ctx)
+	if err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
+	}
+	// Must not be wrapped in ErrUnavailable — context errors propagate raw.
+	if errors.Is(err, adapter.ErrUnavailable) {
+		t.Fatalf("context.Canceled must propagate raw, not wrapped in ErrUnavailable; got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListNative tests (T-13)
+// ---------------------------------------------------------------------------
+
+// buildPages constructs a slice of observationsPage for fakeTransport from
+// groups of items. The last page has HasMore=false; earlier pages have HasMore=true.
+func buildPages(groups ...[]json.RawMessage) []observationsPage {
+	pages := make([]observationsPage, len(groups))
+	for i, items := range groups {
+		pages[i] = observationsPage{
+			Items:   items,
+			HasMore: i < len(groups)-1,
+			Offset:  i * 100,
+			Limit:   100,
+		}
+	}
+	return pages
+}
+
+// TestListNative_ThreePagePagination_ProjectFilter verifies Scenario D:
+// 3 pages fetched at offsets 0/100/200; cross-project records discarded.
+func TestListNative_ThreePagePagination_ProjectFilter(t *testing.T) {
+	// Page 1: 60 "my-project" + 40 "other" (total 100, HasMore=true)
+	// Page 2: 100 "my-project" items (HasMore=true)
+	// Page 3: 50 "my-project" items (HasMore=false)
+	updatedAt := "2026-05-16T10:00:00Z"
+
+	var p1 []json.RawMessage
+	for i := 0; i < 60; i++ {
+		p1 = append(p1, makeRawItem(fmt.Sprintf("mp1-%d", i), "my-project", updatedAt))
+	}
+	for i := 0; i < 40; i++ {
+		p1 = append(p1, makeRawItem(fmt.Sprintf("ot1-%d", i), "other-project", updatedAt))
+	}
+
+	var p2 []json.RawMessage
+	for i := 0; i < 100; i++ {
+		p2 = append(p2, makeRawItem(fmt.Sprintf("mp2-%d", i), "my-project", updatedAt))
+	}
+
+	var p3 []json.RawMessage
+	for i := 0; i < 50; i++ {
+		p3 = append(p3, makeRawItem(fmt.Sprintf("mp3-%d", i), "my-project", updatedAt))
+	}
+
+	ft := &fakeTransport{pages: buildPages(p1, p2, p3)}
+	a := New(ft)
+	since := time.Time{} // zero time — accept all
+
+	ids, err := a.ListNative(context.Background(), "my-project", since)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Must make exactly 3 ListPage calls with offsets 0, 100, 200.
+	if len(ft.listPageCalls) != 3 {
+		t.Fatalf("expected 3 ListPage calls, got %d", len(ft.listPageCalls))
+	}
+	wantOffsets := [][2]int{{100, 0}, {100, 100}, {100, 200}}
+	for i, call := range ft.listPageCalls {
+		if call != wantOffsets[i] {
+			t.Errorf("call[%d]: got (limit=%d, offset=%d), want (limit=%d, offset=%d)",
+				i, call[0], call[1], wantOffsets[i][0], wantOffsets[i][1])
+		}
+	}
+
+	// 60 + 100 + 50 = 210 "my-project" IDs; zero from "other-project".
+	if len(ids) != 210 {
+		t.Fatalf("expected 210 my-project IDs, got %d", len(ids))
+	}
+	for _, id := range ids {
+		s := string(id)
+		if !strings.HasPrefix(s, "mp") {
+			t.Errorf("non-my-project ID leaked: %q", s)
+		}
+	}
+}
+
+// TestListNative_SinceFilter verifies Scenario E: 4 records before since discarded,
+// 6 records after since retained.
+func TestListNative_SinceFilter(t *testing.T) {
+	cutoff := "2026-05-16T12:00:00Z"
+
+	items := []json.RawMessage{
+		makeRawItem("old-1", "proj", "2026-05-16T10:00:00Z"),
+		makeRawItem("old-2", "proj", "2026-05-16T11:00:00Z"),
+		makeRawItem("old-3", "proj", "2026-05-16T11:30:00Z"),
+		makeRawItem("old-4", "proj", "2026-05-16T11:59:59Z"),
+		makeRawItem("new-1", "proj", "2026-05-16T12:00:00Z"),
+		makeRawItem("new-2", "proj", "2026-05-16T13:00:00Z"),
+		makeRawItem("new-3", "proj", "2026-05-16T14:00:00Z"),
+		makeRawItem("new-4", "proj", "2026-05-17T00:00:00Z"),
+		makeRawItem("new-5", "proj", "2026-05-17T10:00:00Z"),
+		makeRawItem("new-6", "proj", "2026-05-18T00:00:00Z"),
+	}
+
+	ft := &fakeTransport{pages: buildPages(items)}
+	a := New(ft)
+
+	sinceTime, _ := time.Parse(time.RFC3339, cutoff)
+	ids, err := a.ListNative(context.Background(), "proj", sinceTime)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 6 {
+		t.Fatalf("expected 6 IDs after since filter, got %d: %v", len(ids), ids)
+	}
+	for _, id := range ids {
+		if !strings.HasPrefix(string(id), "new-") {
+			t.Errorf("old record should have been filtered: %q", id)
+		}
+	}
+}
+
+// TestListNative_CrossProjectIsolation verifies Scenario G: only proj-B records
+// returned when proj-A, proj-B, proj-C are intermixed.
+func TestListNative_CrossProjectIsolation(t *testing.T) {
+	updatedAt := "2026-05-16T10:00:00Z"
+	items := []json.RawMessage{
+		makeRawItem("a-1", "proj-A", updatedAt),
+		makeRawItem("b-1", "proj-B", updatedAt),
+		makeRawItem("c-1", "proj-C", updatedAt),
+		makeRawItem("a-2", "proj-A", updatedAt),
+		makeRawItem("b-2", "proj-B", updatedAt),
+		makeRawItem("c-2", "proj-C", updatedAt),
+		makeRawItem("b-3", "proj-B", updatedAt),
+	}
+
+	ft := &fakeTransport{pages: buildPages(items)}
+	a := New(ft)
+
+	ids, err := a.ListNative(context.Background(), "proj-B", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 proj-B IDs, got %d", len(ids))
+	}
+	for _, id := range ids {
+		if !strings.HasPrefix(string(id), "b-") {
+			t.Errorf("non-proj-B ID leaked: %q", id)
+		}
+	}
+}
+
+// TestListNative_TimestampNormalization verifies Scenario H: SQLite-format
+// updated_at is normalized correctly and passes the since filter as expected.
+func TestListNative_TimestampNormalization(t *testing.T) {
+	// Record with SQLite format "2026-05-16 15:04:05" must normalize and
+	// pass a since of 2026-05-16T14:00:00Z.
+	sqliteItem, _ := json.Marshal(claudeMemRecord{
+		ID:        "sqlite-obs",
+		ProjectID: "proj",
+		Title:     "t",
+		Summary:   "s",
+		UpdatedAt: "2026-05-16 15:04:05", // SQLite layout (ADR-6)
+		CreatedAt: "2026-05-16T10:00:00Z",
+	})
+
+	ft := &fakeTransport{pages: buildPages([]json.RawMessage{sqliteItem})}
+	a := New(ft)
+
+	since, _ := time.Parse(time.RFC3339, "2026-05-16T14:00:00Z")
+	ids, err := a.ListNative(context.Background(), "proj", since)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "sqlite-obs" {
+		t.Fatalf("expected [sqlite-obs], got %v", ids)
+	}
+}
+
+// TestListNative_UnparseableUpdatedAt_Skipped verifies ADR-6 discipline: a record
+// with an unparseable updated_at is skipped (warn logged) and never stored.
+func TestListNative_UnparseableUpdatedAt_Skipped(t *testing.T) {
+	badItem, _ := json.Marshal(claudeMemRecord{
+		ID:        "bad-ts",
+		ProjectID: "proj",
+		Title:     "t",
+		Summary:   "s",
+		UpdatedAt: "not-a-timestamp",
+		CreatedAt: "2026-05-16T10:00:00Z",
+	})
+	goodItem := makeRawItem("good-1", "proj", "2026-05-17T10:00:00Z")
+
+	ft := &fakeTransport{pages: buildPages([]json.RawMessage{badItem, goodItem})}
+	a := New(ft)
+
+	ids, err := a.ListNative(context.Background(), "proj", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// "bad-ts" must be skipped; "good-1" must be present.
+	if len(ids) != 1 || ids[0] != "good-1" {
+		t.Fatalf("expected [good-1], got %v", ids)
+	}
+}
+
+// TestListNative_ContextCancellation_Aborts verifies that context cancellation
+// propagates raw (context.Canceled) without wrapping — matching the engram adapter contract.
+// The fake is scripted to return context.Canceled so no real goroutine race is needed.
+func TestListNative_ContextCancellation_Aborts(t *testing.T) {
+	// Script the transport to return context.Canceled so the test is deterministic.
+	ft := &fakeTransport{listPageErr: context.Canceled}
+	a := New(ft)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := a.ListNative(ctx, "proj", time.Time{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected errors.Is(err, context.Canceled), got %v", err)
+	}
+}
+
+// TestListNative_EmptyPageWithHasMoreTrue_Terminates is a regression test for
+// the infinite-loop guard (W-1). A misbehaving server that returns HasMore:true
+// with an empty Items slice must not cause an infinite loop — ListNative must
+// terminate and return an empty result. The fake is bounded: it returns exactly
+// one page (HasMore:true, Items:[]) so the fake itself never loops.
+func TestListNative_EmptyPageWithHasMoreTrue_Terminates(t *testing.T) {
+	// Single page: HasMore=true but Items is empty — server bug / DoS scenario.
+	ft := &fakeTransport{
+		pages: []observationsPage{
+			{Items: []json.RawMessage{}, HasMore: true},
+		},
+	}
+	a := New(ft)
+
+	ids, err := a.ListNative(context.Background(), "proj", time.Time{})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected empty result, got %v", ids)
+	}
+	// Must have made exactly one ListPage call (offset 0) and then stopped.
+	if len(ft.listPageCalls) != 1 {
+		t.Fatalf("expected 1 ListPage call, got %d", len(ft.listPageCalls))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReadNative tests (T-14)
+// ---------------------------------------------------------------------------
+
+// TestReadNative_HappyPath_PerID verifies ReadNative returns the record when
+// GetByID succeeds.
+func TestReadNative_HappyPath_PerID(t *testing.T) {
+	bodyBytes, _ := json.Marshal(claudeMemRecord{
+		ID:        "obs-1",
+		ProjectID: "proj",
+		Title:     "My Title",
+		Summary:   "My Summary",
+		UpdatedAt: "2026-05-16T10:00:00Z",
+		CreatedAt: "2026-05-16T09:00:00Z",
+	})
+
+	ft := &fakeTransport{
+		getByIDFound: true,
+		getByIDBody:  bodyBytes,
+	}
+	a := New(ft)
+
+	rec, err := a.ReadNative(context.Background(), "obs-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, ok := rec.(claudeMemRecord)
+	if !ok {
+		t.Fatalf("expected claudeMemRecord, got %T", rec)
+	}
+	if got.ID != "obs-1" {
+		t.Errorf("ID: got %q, want %q", got.ID, "obs-1")
+	}
+	if got.Raw == nil {
+		t.Error("Raw must be populated on ReadNative")
+	}
+	// W-5: verify the correct id was forwarded to GetByID.
+	if ft.getByIDReceivedID != "obs-1" {
+		t.Errorf("GetByID received id %q, want %q", ft.getByIDReceivedID, "obs-1")
+	}
+}
+
+// TestReadNative_CleanNotFound_ErrNotFound verifies ADR-5: clean 404 from
+// GetByID returns adapter.ErrNotFound (no degrade).
+func TestReadNative_CleanNotFound_ErrNotFound(t *testing.T) {
+	ft := &fakeTransport{
+		getByIDErr: adapter.ErrNotFound,
+	}
+	a := New(ft)
+
+	_, err := a.ReadNative(context.Background(), "missing")
+	if !isNotFound(err) {
+		t.Fatalf("expected ErrNotFound for clean 404, got %v", err)
+	}
+}
+
+// TestReadNative_DegradeToScan_Found verifies ADR-5: when GetByID returns
+// ErrUnavailable, ReadNative degrades to paginate+scan and finds the record.
+func TestReadNative_DegradeToScan_Found(t *testing.T) {
+	target, _ := json.Marshal(claudeMemRecord{
+		ID:        "obs-42",
+		ProjectID: "proj",
+		Title:     "Found via scan",
+		UpdatedAt: "2026-05-16T10:00:00Z",
+		CreatedAt: "2026-05-16T09:00:00Z",
+	})
+
+	items := []json.RawMessage{
+		makeRawItem("obs-1", "proj", "2026-05-16T10:00:00Z"),
+		target,
+		makeRawItem("obs-99", "proj", "2026-05-16T10:00:00Z"),
+	}
+
+	ft := &fakeTransport{
+		getByIDErr: fmt.Errorf("%w: endpoint not found", adapter.ErrUnavailable),
+		pages:      buildPages(items),
+	}
+	a := New(ft)
+
+	rec, err := a.ReadNative(context.Background(), "obs-42")
+	if err != nil {
+		t.Fatalf("unexpected error during degrade scan: %v", err)
+	}
+	got, ok := rec.(claudeMemRecord)
+	if !ok {
+		t.Fatalf("expected claudeMemRecord, got %T", rec)
+	}
+	if got.ID != "obs-42" {
+		t.Errorf("ID: got %q, want %q", got.ID, "obs-42")
+	}
+}
+
+// TestReadNative_DegradeToScan_Exhausted_ErrNotFound verifies ADR-5: scan
+// exhausted (id not present anywhere) → adapter.ErrNotFound.
+func TestReadNative_DegradeToScan_Exhausted_ErrNotFound(t *testing.T) {
+	items := []json.RawMessage{
+		makeRawItem("obs-1", "proj", "2026-05-16T10:00:00Z"),
+		makeRawItem("obs-2", "proj", "2026-05-16T10:00:00Z"),
+	}
+
+	ft := &fakeTransport{
+		getByIDErr: fmt.Errorf("%w: 5xx", adapter.ErrUnavailable),
+		pages:      buildPages(items),
+	}
+	a := New(ft)
+
+	_, err := a.ReadNative(context.Background(), "obs-ghost")
+	if !isNotFound(err) {
+		t.Fatalf("expected ErrNotFound after exhausted scan, got %v", err)
+	}
+}
+
+// TestReadNative_NilTransport_ErrUnavailable verifies nil transport returns ErrUnavailable.
+func TestReadNative_NilTransport_ErrUnavailable(t *testing.T) {
+	a := New(nil)
+	_, err := a.ReadNative(context.Background(), "any")
+	if !isUnavailable(err) {
+		t.Fatalf("expected ErrUnavailable for nil transport, got %v", err)
+	}
+}
+
+// TestReadNative_DegradeToScan_TransportError_ErrUnavailable verifies that a
+// transport error during the degrade scan is returned as ErrUnavailable.
+func TestReadNative_DegradeToScan_TransportError_ErrUnavailable(t *testing.T) {
+	ft := &fakeTransport{
+		// GetByID returns ErrUnavailable → triggers degrade.
+		getByIDErr: fmt.Errorf("%w: refused", adapter.ErrUnavailable),
+		// ListPage also returns ErrUnavailable (network down during scan).
+		listPageErr: fmt.Errorf("%w: refused during scan", adapter.ErrUnavailable),
+	}
+	a := New(ft)
+
+	_, err := a.ReadNative(context.Background(), "obs-x")
+	if !isUnavailable(err) {
+		t.Fatalf("expected ErrUnavailable when scan transport fails, got %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ package claudemem
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -226,14 +227,94 @@ func (a *ClaudeMemAdapter) Name() string {
 // failure or non-2xx. Context cancellation propagates raw.
 // Returns adapter.ErrUnavailable immediately when the transport is nil.
 func (a *ClaudeMemAdapter) Health(ctx context.Context) error {
-	panic("not yet implemented in PR#1 — will be filled in PR#3 (T-12)")
+	if a.transport == nil {
+		return fmt.Errorf("%w: transport is nil", adapter.ErrUnavailable)
+	}
+	if err := a.transport.Health(ctx); err != nil {
+		// Context cancellation / deadline propagated raw per design §8.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("%w: health check failed: %v", adapter.ErrUnavailable, err)
+	}
+	return nil
 }
 
 // ListNative returns all project-scoped native IDs updated at or after since
 // (REQ-CM-06, REQ-CM-07, REQ-CM-08).
 // Returns adapter.ErrUnavailable immediately when the transport is nil.
 func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since time.Time) ([]adapter.NativeID, error) {
-	panic("not yet implemented in PR#1 — will be filled in PR#3 (T-13)")
+	if a.transport == nil {
+		return nil, fmt.Errorf("%w: transport is nil", adapter.ErrUnavailable)
+	}
+
+	// REQ-CM-08: pre-format the since threshold once for string comparison (REQ-TS-03).
+	sinceStr := since.UTC().Format(rfc3339NanoFixed)
+
+	const pageLimit = 100
+	var ids []adapter.NativeID
+	firstObsLogged := false
+
+	for offset := 0; ; offset += pageLimit {
+		// REQ-CM-06: abort on context cancellation.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		body, err := a.transport.ListPage(ctx, pageLimit, offset)
+		if err != nil {
+			return nil, err
+		}
+
+		var page observationsPage
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("%w: decode page at offset %d: %v", adapter.ErrUnavailable, offset, err)
+		}
+
+		for _, raw := range page.Items {
+			var rec claudeMemRecord
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				// Skip unparseable items — log and continue (permissive, REQ-CM-18).
+				log.Printf("claude-mem adapter: WARN skipping unparseable item at offset %d: %v; raw=%s", offset, err, raw)
+				continue
+			}
+			rec.Raw = raw
+
+			// §9 forensic: log first observation raw JSON at INFO (REQ-CM-17).
+			if !firstObsLogged {
+				log.Printf("claude-mem adapter: first observation raw JSON: %s", rec.Raw)
+				firstObsLogged = true
+			}
+
+			// REQ-CM-07: strict project equality filter (ADR-11).
+			if rec.ProjectID != project {
+				continue
+			}
+
+			// ADR-6: unparseable updated_at → WARN + skip, never store unnormalized.
+			normalizedUpdatedAt, err := normalizeTimestamp(rec.UpdatedAt)
+			if err != nil {
+				log.Printf("claude-mem adapter: WARN skipping obs %q unparseable updated_at %q: %v", rec.ID, rec.UpdatedAt, err)
+				continue
+			}
+
+			// REQ-CM-08: since filter — string comparison on rfc3339NanoFixed (REQ-TS-03).
+			if normalizedUpdatedAt < sinceStr {
+				continue
+			}
+
+			ids = append(ids, adapter.NativeID(rec.ID))
+		}
+
+		// Guard: a server that returns HasMore:true with an empty Items slice
+		// would cause an infinite loop. Treat empty pages as terminal regardless
+		// of the HasMore flag (DoS / infinite-loop prevention).
+		if len(page.Items) == 0 || !page.HasMore {
+			break
+		}
+	}
+
+	return ids, nil
 }
 
 // ReadNative retrieves the full native record for id (REQ-CM-09).
@@ -241,7 +322,74 @@ func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since
 // degrades to paginate+scan. On ErrNotFound (clean 404): returns ErrNotFound.
 // Returns adapter.ErrUnavailable immediately when the transport is nil.
 func (a *ClaudeMemAdapter) ReadNative(ctx context.Context, id adapter.NativeID) (adapter.NativeRecord, error) {
-	panic("not yet implemented in PR#1 — will be filled in PR#3 (T-14)")
+	if a.transport == nil {
+		return nil, fmt.Errorf("%w: transport is nil", adapter.ErrUnavailable)
+	}
+
+	// ADR-5 primary path: try GET /api/observations/:id.
+	body, found, err := a.transport.GetByID(ctx, string(id))
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		if errors.Is(err, adapter.ErrNotFound) {
+			// Clean 404: definitive not-found, do not degrade.
+			return nil, adapter.ErrNotFound
+		}
+		// ErrUnavailable (missing endpoint / 5xx / connection refused):
+		// degrade to paginate+scan (ADR-5).
+	}
+
+	if found && err == nil {
+		var rec claudeMemRecord
+		if unmarshalErr := json.Unmarshal(body, &rec); unmarshalErr != nil {
+			return nil, fmt.Errorf("%w: decode record %q: %v", adapter.ErrUnavailable, id, unmarshalErr)
+		}
+		rec.Raw = body
+		return rec, nil
+	}
+
+	// ADR-5 degrade path: paginate all pages scanning for the matching id.
+	const pageLimit = 100
+	for offset := 0; ; offset += pageLimit {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		pageBody, pageErr := a.transport.ListPage(ctx, pageLimit, offset)
+		if pageErr != nil {
+			if errors.Is(pageErr, context.Canceled) || errors.Is(pageErr, context.DeadlineExceeded) {
+				return nil, pageErr
+			}
+			return nil, fmt.Errorf("%w: scan for %q at offset %d: %v", adapter.ErrUnavailable, id, offset, pageErr)
+		}
+
+		var page observationsPage
+		if unmarshalErr := json.Unmarshal(pageBody, &page); unmarshalErr != nil {
+			return nil, fmt.Errorf("%w: decode scan page at offset %d: %v", adapter.ErrUnavailable, offset, unmarshalErr)
+		}
+
+		for _, raw := range page.Items {
+			var rec claudeMemRecord
+			if unmarshalErr := json.Unmarshal(raw, &rec); unmarshalErr != nil {
+				continue
+			}
+			if rec.ID == string(id) {
+				rec.Raw = raw
+				return rec, nil
+			}
+		}
+
+		// Guard: a server that returns HasMore:true with an empty Items slice
+		// would cause an infinite loop. Treat empty pages as terminal regardless
+		// of the HasMore flag (DoS / infinite-loop prevention).
+		if len(page.Items) == 0 || !page.HasMore {
+			break
+		}
+	}
+
+	// Scan exhausted — record not found anywhere.
+	return nil, adapter.ErrNotFound
 }
 
 // ToCanonical converts a native claudeMemRecord to a store.CanonicalRecord
