@@ -9,3 +9,6 @@
 
 # OS / editor
 .DS_Store
+
+# Agent Teams Lite local state
+.atl/
