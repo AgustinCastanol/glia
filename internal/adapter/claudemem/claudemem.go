@@ -5,9 +5,12 @@
 //   - D1: HTTP-only, no Commander seam (claude-mem has no usable CLI enumeration).
 //   - D2: Read-only — WriteNative returns ErrUnsupported.
 //   - D3: Health is HTTP GET /health, not a CLI version probe.
-//   - D4: Kind is ALWAYS "session_summary", never "observation".
-//   - D5: Provisional JSON field names — HARD PRE-MERGE GATE (see §5 comments).
+//   - D4: Kind is ALWAYS "session_summary", never "observation" (ADR-9).
+//   - D5: Field names verified live 2026-05-20 against worker :37701 — pre-merge
+//     gate DISCHARGED; provisional comments removed.
 //   - D6: ListNative paginates GET /api/observations instead of one GET /export dump.
+//   - D7: claude-mem observations are append-only — no updated_at exists.
+//     Since-filter is rebased on created_at and canonical UpdatedAt mirrors CreatedAt.
 package claudemem
 
 import (
@@ -17,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -24,42 +28,52 @@ import (
 	"github.com/agustincastanol/wrapper-mems/internal/store"
 )
 
-// claudeMemRecord is the PROVISIONAL internal representation of a single
-// claude-mem observation as returned by GET /api/observations.
+// claudeMemRecord is the internal representation of a single claude-mem
+// observation as returned by GET /api/observations. Field names were verified
+// live against the claude-mem v13 worker on 2026-05-20 (pre-merge gate
+// discharged).
 //
-// PROVISIONAL: This struct and all its JSON tags are derived from PRD-2 §5/§6
-// and have NOT been verified against a live claude-mem instance with ≥1
-// observation. A HARD PRE-MERGE GATE (REQ-CM-20) blocks apply/merge until the
-// field names below are reconfirmed against real data.
+// Fields NOT in the real API and dropped from the prior provisional struct:
+// session_id, project_id, summary, tags, updated_at.
 //
-// Every json tag in this type carries a // PRE-MERGE GATE comment. Do NOT
-// remove those comments until the integration test (T-16) has discharged the
-// gate and field names are reconfirmed.
+// Forensic fields (subtitle, created_at_epoch, prompt_number, etc.) are not
+// surfaced through ToCanonical in v1 but are decoded so they remain available
+// via rec.Raw for downstream tooling.
 type claudeMemRecord struct {
-	ID        string   `json:"id,omitempty"`          // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	ProjectID string   `json:"project_id,omitempty"`  // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	SessionID string   `json:"session_id,omitempty"`  // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	Title     string   `json:"title,omitempty"`       // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	Summary   string   `json:"summary,omitempty"`     // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	Tags      []string `json:"tags,omitempty"`        // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	CreatedAt string   `json:"created_at,omitempty"`  // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	UpdatedAt string   `json:"updated_at,omitempty"`  // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	// Raw captures the original JSON bytes for forensic inspection and field-name
-	// reconfirmation (REQ-CM-17, design §9). Excluded from marshalling.
+	ID             int64           `json:"id"`
+	MemorySessionID string         `json:"memory_session_id,omitempty"`
+	Project        string          `json:"project,omitempty"`
+	Type           string          `json:"type,omitempty"`
+	Title          string          `json:"title,omitempty"`
+	Subtitle       string          `json:"subtitle,omitempty"`
+	Narrative      string          `json:"narrative,omitempty"`
+	CreatedAt      string          `json:"created_at,omitempty"`
+	CreatedAtEpoch int64           `json:"created_at_epoch,omitempty"`
+	PromptNumber   int             `json:"prompt_number,omitempty"`
+	// Raw captures the original JSON bytes for forensic inspection and access to
+	// untyped fields (subtitle, facts/concepts/files_* — the latter are
+	// JSON-encoded string blobs in the live API). Excluded from marshalling.
 	Raw json.RawMessage `json:"-"`
 }
 
-// observationsPage is the PROVISIONAL envelope returned by GET /api/observations.
-// The hasMore/offset/limit field names are also unverified — PRE-MERGE GATE applies.
+// nativeIDString returns the canonical string form of the numeric ID used by
+// adapter.NativeID and store.Origin.ProviderID. Centralized so int64↔string
+// conversion is consistent across List/Read/ToCanonical.
+func (r claudeMemRecord) nativeIDString() string {
+	return strconv.FormatInt(r.ID, 10)
+}
+
+// observationsPage is the envelope returned by GET /api/observations. Field
+// names verified live 2026-05-20.
 type observationsPage struct {
-	Items   []json.RawMessage `json:"items"`   // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	HasMore bool              `json:"hasMore"` // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	Offset  int               `json:"offset"`  // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
-	Limit   int               `json:"limit"`   // PRE-MERGE GATE: provisional field name, reconfirm against live claude-mem
+	Items   []json.RawMessage `json:"items"`
+	HasMore bool              `json:"hasMore"`
+	Offset  int               `json:"offset"`
+	Limit   int               `json:"limit"`
 }
 
 // ---------------------------------------------------------------------------
-// T-06: authorAttribution (verbatim copy from engram adapter — ADR-8).
+// authorAttribution (verbatim copy from engram adapter — ADR-8).
 // ---------------------------------------------------------------------------
 
 // authorAttribution returns the value to use for origin.author per REQ-ENG-19:
@@ -84,7 +98,7 @@ func authorAttribution() string {
 }
 
 // ---------------------------------------------------------------------------
-// T-06: providerIDMapWrapper + WrapIDMap (verbatim copy from engram adapter — ADR-7).
+// providerIDMapWrapper + WrapIDMap (verbatim copy from engram adapter — ADR-7).
 // ---------------------------------------------------------------------------
 
 // providerIDMapWrapper wraps *store.providerIDMap and adapts its plain-string
@@ -128,7 +142,7 @@ func WrapIDMap(inner interface {
 }
 
 // ---------------------------------------------------------------------------
-// T-07: rfc3339NanoFixed, normalizeTimestamp, tolerant multi-layout parse (ADR-6).
+// rfc3339NanoFixed, normalizeTimestamp, tolerant multi-layout parse (ADR-6).
 // ---------------------------------------------------------------------------
 
 // rfc3339NanoFixed is an explicit 9-digit nanosecond format with UTC Z suffix.
@@ -142,18 +156,9 @@ const rfc3339NanoFixed = "2006-01-02T15:04:05.000000000Z"
 // storage layer, so we accept it as a fallback (ADR-6).
 const claudeMemSQLiteLayout = "2006-01-02 15:04:05"
 
-// normalizeTimestamp parses a timestamp using the accepted layout set (ADR-6):
-//  1. time.RFC3339Nano (canonical, with nanoseconds).
-//  2. time.RFC3339 (without nanoseconds).
-//  3. claudeMemSQLiteLayout ("2006-01-02 15:04:05", implicitly UTC).
-//
-// On success, re-formats as rfc3339NanoFixed (UTC, 9-digit nanoseconds) to
-// protect the REQ-TS-03 byte-comparable invariant.
-//
-// Unknown format → returns a wrapped error with %w so callers can errors.Is/As
-// the underlying parse failure (ADR-6: NON-SILENT, composable failure).
-// ToCanonical rejects the record; ListNative skips + warns.
-// Never silently store an unnormalized timestamp.
+// normalizeTimestamp parses a timestamp using the accepted layout set (ADR-6)
+// and re-formats as rfc3339NanoFixed (UTC, 9-digit nanoseconds) to protect the
+// REQ-TS-03 byte-comparable invariant. Unknown format → wrapped error.
 func normalizeTimestamp(ts string) (string, error) {
 	if ts == "" {
 		return "", nil
@@ -171,33 +176,31 @@ func normalizeTimestamp(ts string) (string, error) {
 }
 
 // titleMaxRunes is the maximum number of Unicode code points used when deriving
-// a Title from Summary (REQ-CM-12). Kept intentionally short so titles remain
-// scannable; PRD-3 may override this at the orchestration layer.
+// a Title fallback (REQ-CM-12). Kept short so titles remain scannable.
 const titleMaxRunes = 80
 
-// deriveTitle returns the first titleMaxRunes runes of summary, or "" if summary
-// is empty. Used when ClaudeMemRecord.Title is absent (REQ-CM-12).
-func deriveTitle(summary string) string {
-	if summary == "" {
+// deriveTitle returns the first titleMaxRunes runes of source, or "" if source
+// is empty. Used when claudeMemRecord.Title is absent (REQ-CM-12). Falls back
+// to Subtitle then Narrative in caller.
+func deriveTitle(source string) string {
+	if source == "" {
 		return ""
 	}
-	if utf8.RuneCountInString(summary) <= titleMaxRunes {
-		return summary
+	if utf8.RuneCountInString(source) <= titleMaxRunes {
+		return source
 	}
-	// Slice at the titleMaxRunes-th rune boundary.
 	i := 0
 	for n := 0; n < titleMaxRunes; n++ {
-		_, size := utf8.DecodeRuneInString(summary[i:])
+		_, size := utf8.DecodeRuneInString(source[i:])
 		i += size
 	}
-	return summary[:i]
+	return source[:i]
 }
 
 // ---------------------------------------------------------------------------
-// Compile-time assertion: ClaudeMemAdapter must satisfy adapter.Adapter (REQ-CM-01, CON-03).
+// Compile-time assertion: ClaudeMemAdapter must satisfy adapter.Adapter.
 // ---------------------------------------------------------------------------
 
-// Compile-time assertion: ClaudeMemAdapter must satisfy adapter.Adapter (REQ-CM-01, CON-03).
 var _ adapter.Adapter = (*ClaudeMemAdapter)(nil)
 
 // ClaudeMemAdapter implements adapter.Adapter for the claude-mem memory provider.
@@ -211,7 +214,7 @@ type ClaudeMemAdapter struct {
 // daemon. Pass NewHTTPTransport("") for production use.
 //
 // Construction never fails: a nil transport is accepted and causes I/O methods
-// to return adapter.ErrUnavailable without panicking (design §8).
+// to return adapter.ErrUnavailable without panicking.
 func New(transport Transport) *ClaudeMemAdapter {
 	return &ClaudeMemAdapter{transport: transport}
 }
@@ -223,15 +226,11 @@ func (a *ClaudeMemAdapter) Name() string {
 }
 
 // Health probes the claude-mem daemon (REQ-CM-04).
-// Returns nil on 2xx. Returns adapter.ErrUnavailable (wrapped) on connection
-// failure or non-2xx. Context cancellation propagates raw.
-// Returns adapter.ErrUnavailable immediately when the transport is nil.
 func (a *ClaudeMemAdapter) Health(ctx context.Context) error {
 	if a.transport == nil {
 		return fmt.Errorf("%w: transport is nil", adapter.ErrUnavailable)
 	}
 	if err := a.transport.Health(ctx); err != nil {
-		// Context cancellation / deadline propagated raw per design §8.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
@@ -240,15 +239,16 @@ func (a *ClaudeMemAdapter) Health(ctx context.Context) error {
 	return nil
 }
 
-// ListNative returns all project-scoped native IDs updated at or after since
+// ListNative returns all project-scoped native IDs created at or after since
 // (REQ-CM-06, REQ-CM-07, REQ-CM-08).
-// Returns adapter.ErrUnavailable immediately when the transport is nil.
+//
+// claude-mem observations are append-only (no updated_at field exists in the
+// API). The since-filter is rebased on created_at (D7).
 func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since time.Time) ([]adapter.NativeID, error) {
 	if a.transport == nil {
 		return nil, fmt.Errorf("%w: transport is nil", adapter.ErrUnavailable)
 	}
 
-	// REQ-CM-08: pre-format the since threshold once for string comparison (REQ-TS-03).
 	sinceStr := since.UTC().Format(rfc3339NanoFixed)
 
 	const pageLimit = 100
@@ -256,7 +256,6 @@ func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since
 	firstObsLogged := false
 
 	for offset := 0; ; offset += pageLimit {
-		// REQ-CM-06: abort on context cancellation.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -274,41 +273,39 @@ func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since
 		for _, raw := range page.Items {
 			var rec claudeMemRecord
 			if err := json.Unmarshal(raw, &rec); err != nil {
-				// Skip unparseable items — log and continue (permissive, REQ-CM-18).
 				log.Printf("claude-mem adapter: WARN skipping unparseable item at offset %d: %v; raw=%s", offset, err, raw)
 				continue
 			}
 			rec.Raw = raw
 
-			// §9 forensic: log first observation raw JSON at INFO (REQ-CM-17).
 			if !firstObsLogged {
 				log.Printf("claude-mem adapter: first observation raw JSON: %s", rec.Raw)
 				firstObsLogged = true
 			}
 
-			// REQ-CM-07: strict project equality filter (ADR-11).
-			if rec.ProjectID != project {
+			// REQ-CM-07: strict project equality filter on the `project` field
+			// (project name, NOT path — verified 2026-05-20).
+			if rec.Project != project {
 				continue
 			}
 
-			// ADR-6: unparseable updated_at → WARN + skip, never store unnormalized.
-			normalizedUpdatedAt, err := normalizeTimestamp(rec.UpdatedAt)
+			// REQ-CM-08 (rebased on created_at — D7). Unparseable → WARN+skip.
+			normalizedCreatedAt, err := normalizeTimestamp(rec.CreatedAt)
 			if err != nil {
-				log.Printf("claude-mem adapter: WARN skipping obs %q unparseable updated_at %q: %v", rec.ID, rec.UpdatedAt, err)
+				log.Printf("claude-mem adapter: WARN skipping obs id=%d unparseable created_at %q: %v", rec.ID, rec.CreatedAt, err)
 				continue
 			}
 
-			// REQ-CM-08: since filter — string comparison on rfc3339NanoFixed (REQ-TS-03).
-			if normalizedUpdatedAt < sinceStr {
+			if normalizedCreatedAt < sinceStr {
 				continue
 			}
 
-			ids = append(ids, adapter.NativeID(rec.ID))
+			ids = append(ids, adapter.NativeID(rec.nativeIDString()))
 		}
 
 		// Guard: a server that returns HasMore:true with an empty Items slice
 		// would cause an infinite loop. Treat empty pages as terminal regardless
-		// of the HasMore flag (DoS / infinite-loop prevention).
+		// of the HasMore flag.
 		if len(page.Items) == 0 || !page.HasMore {
 			break
 		}
@@ -320,24 +317,20 @@ func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since
 // ReadNative retrieves the full native record for id (REQ-CM-09).
 // Primary: GET /api/observations/:id. On ErrUnavailable (endpoint missing/5xx):
 // degrades to paginate+scan. On ErrNotFound (clean 404): returns ErrNotFound.
-// Returns adapter.ErrUnavailable immediately when the transport is nil.
 func (a *ClaudeMemAdapter) ReadNative(ctx context.Context, id adapter.NativeID) (adapter.NativeRecord, error) {
 	if a.transport == nil {
 		return nil, fmt.Errorf("%w: transport is nil", adapter.ErrUnavailable)
 	}
 
-	// ADR-5 primary path: try GET /api/observations/:id.
 	body, found, err := a.transport.GetByID(ctx, string(id))
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
 		if errors.Is(err, adapter.ErrNotFound) {
-			// Clean 404: definitive not-found, do not degrade.
 			return nil, adapter.ErrNotFound
 		}
-		// ErrUnavailable (missing endpoint / 5xx / connection refused):
-		// degrade to paginate+scan (ADR-5).
+		// ErrUnavailable: degrade to paginate+scan below.
 	}
 
 	if found && err == nil {
@@ -349,8 +342,9 @@ func (a *ClaudeMemAdapter) ReadNative(ctx context.Context, id adapter.NativeID) 
 		return rec, nil
 	}
 
-	// ADR-5 degrade path: paginate all pages scanning for the matching id.
+	// Degrade: scan paginated list for matching id (string compare on numeric form).
 	const pageLimit = 100
+	target := string(id)
 	for offset := 0; ; offset += pageLimit {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -374,56 +368,57 @@ func (a *ClaudeMemAdapter) ReadNative(ctx context.Context, id adapter.NativeID) 
 			if unmarshalErr := json.Unmarshal(raw, &rec); unmarshalErr != nil {
 				continue
 			}
-			if rec.ID == string(id) {
+			if rec.nativeIDString() == target {
 				rec.Raw = raw
 				return rec, nil
 			}
 		}
 
-		// Guard: a server that returns HasMore:true with an empty Items slice
-		// would cause an infinite loop. Treat empty pages as terminal regardless
-		// of the HasMore flag (DoS / infinite-loop prevention).
 		if len(page.Items) == 0 || !page.HasMore {
 			break
 		}
 	}
 
-	// Scan exhausted — record not found anywhere.
 	return nil, adapter.ErrNotFound
 }
 
 // ToCanonical converts a native claudeMemRecord to a store.CanonicalRecord
 // using idmap for ID resolution. Pure: no I/O (REQ-CM-10).
 //
-// Field mapping follows REQ-CM-11 (PROVISIONAL — pre-merge gate applies):
-//   - id             → Origin.ProviderID
-//   - session_id     → Origin.SessionID
-//   - title          → Title (derived from first N chars of summary when empty)
-//   - summary        → Content; ContentFormat always "markdown"
-//   - tags           → Tags
-//   - created_at     → CreatedAt (normalized via rfc3339NanoFixed)
-//   - updated_at     → UpdatedAt (normalized via rfc3339NanoFixed)
-//   - Kind           always "session_summary" (ADR-9)
-//   - Origin.Provider always "claude-mem" (REQ-CM-02)
-//   - Origin.Author  authorAttribution()
-//   - CanonicalID    IDMap lookup; "" when new (store mints ULID on Append)
-//   - Revision       1 if new; priorRevision+1 if known (REQ-CM-14)
-//   - SchemaVersion  NOT set — store owns it (REQ-CM-11)
+// Field mapping (verified 2026-05-20):
+//   - id (int64)         → strconv → Origin.ProviderID
+//   - memory_session_id  → Origin.SessionID
+//   - title              → Title; falls back to Subtitle then derived-from-Narrative
+//   - narrative          → Content; ContentFormat "markdown"
+//   - type               → Type (claude-mem vocab: discovery/feature/bugfix/...)
+//   - created_at         → CreatedAt (normalized via rfc3339NanoFixed)
+//   - UpdatedAt          mirrors CreatedAt (claude-mem records are append-only, D7)
+//   - Kind               always "session_summary" (ADR-9, D4)
+//   - Origin.Provider    always "claude-mem" (REQ-CM-02)
+//   - Origin.Author      authorAttribution()
+//   - CanonicalID        IDMap lookup; "" when new (store mints ULID on Append)
+//   - Revision           1 if new; -1 sentinel if known (ADR-12)
+//   - Tags               []string{} (claude-mem has no native tags)
+//   - SchemaVersion      NOT set — store owns it (REQ-CM-11)
 func (a *ClaudeMemAdapter) ToCanonical(native adapter.NativeRecord, idmap adapter.IDMap) (store.CanonicalRecord, error) {
 	rec, ok := native.(claudeMemRecord)
 	if !ok {
 		return store.CanonicalRecord{}, fmt.Errorf("ToCanonical: expected claudeMemRecord, got %T", native)
 	}
 
-	// REQ-CM-13: forensic warn when both title and summary are empty.
-	if rec.Title == "" && rec.Summary == "" {
-		log.Printf("claude-mem adapter: WARN observation id=%q has empty title and summary; raw=%s", rec.ID, rec.Raw)
+	// REQ-CM-13: forensic warn when both title and narrative are empty.
+	if rec.Title == "" && rec.Narrative == "" {
+		log.Printf("claude-mem adapter: WARN observation id=%d has empty title and narrative; raw=%s", rec.ID, rec.Raw)
 	}
 
-	// REQ-CM-12: derive title from summary when absent.
+	// Title fallback: Title → Subtitle → derive from Narrative.
 	title := rec.Title
 	if title == "" {
-		title = deriveTitle(rec.Summary)
+		if rec.Subtitle != "" {
+			title = deriveTitle(rec.Subtitle)
+		} else {
+			title = deriveTitle(rec.Narrative)
+		}
 	}
 
 	// REQ-CM-16: normalize timestamps — reject record on unknown format (ADR-6).
@@ -431,93 +426,74 @@ func (a *ClaudeMemAdapter) ToCanonical(native adapter.NativeRecord, idmap adapte
 	if err != nil {
 		return store.CanonicalRecord{}, fmt.Errorf("ToCanonical: %w", err)
 	}
-	updatedAt, err := normalizeTimestamp(rec.UpdatedAt)
-	if err != nil {
-		return store.CanonicalRecord{}, fmt.Errorf("ToCanonical: %w", err)
-	}
+	// D7: claude-mem has no updated_at — canonical UpdatedAt mirrors CreatedAt.
+	updatedAt := createdAt
 
-	// REQ-CM-19: ID resolution via IDMap.
-	nativeID := adapter.NativeID(rec.ID)
+	nativeID := adapter.NativeID(rec.nativeIDString())
 	canonicalID, hasMapping := idmap.CanonicalFromNative(nativeID)
 
-	// REQ-CM-14: revision — 1 for new records; sentinel for known records.
-	//
-	// Shared cross-adapter revision sentinel convention (ADR-7/ADR-8 spirit):
-	//   revision == -1  means "known record; PRD-3 orchestrator must replace
-	//                   with priorRevision+1". Consistent with the engram adapter
-	//                   (internal/adapter/engram/engram.go ~376-378).
-	//   revision ==  1  means genuinely new record (no prior IDMap mapping).
-	//
-	// The IDMap carries only the ID→CanonicalID mapping; the actual current
-	// revision cannot be read without a store lookup (adapter is pure — no I/O).
-	// The orchestrator (PRD-3) owns the final revision value on re-ingest.
-	//
-	// DECISION 2026-05-18 (RESOLVED): shared cross-adapter revision sentinel.
-	// design §6 / ADR-12 (obs #77) and spec REQ-CM-11/14 (obs #76) were
-	// reconciled to this convention: new→1, known→-1, PRD-3 replaces -1 with
-	// priorRevision+1. This is identical to the engram adapter (engram.go ~378)
-	// so PRD-3 handles all adapters through one uniform `revision < 0` branch.
+	// ADR-12: shared cross-adapter revision sentinel.
+	//   new (no IDMap mapping)  → 1
+	//   known (prior mapping)   → -1, signalling PRD-3 orchestrator to replace
+	//                             with priorRevision+1 on re-ingest.
 	revision := 1
 	if hasMapping {
-		// Known record: signal "orchestrator must assign final revision".
-		// -1 is the shared sentinel matching the engram adapter's convention.
 		revision = -1
 	}
 
-	// Ensure tags is never nil (empty slice is more correct than nil for JSON).
-	tags := rec.Tags
-	if tags == nil {
-		tags = []string{}
-	}
-
 	return store.CanonicalRecord{
-		CanonicalID:   string(canonicalID), // "" when new — store mints ULID on Append
-		Kind:          "session_summary",   // ALWAYS — ADR-9, D4
+		CanonicalID:   string(canonicalID),
+		Kind:          "session_summary",
 		Revision:      revision,
 		Title:         title,
-		Content:       rec.Summary,
+		Content:       rec.Narrative,
 		ContentFormat: "markdown",
-		Type:          "",       // claude-mem has no engram-style type vocabulary
-		TopicKey:      "",       // not applicable
+		Type:          rec.Type,
+		TopicKey:      "",
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
-		Tags:          tags,
+		Tags:          []string{},
 		Origin: store.Origin{
-			Provider:   "claude-mem", // ALWAYS — REQ-CM-02
-			ProviderID: rec.ID,
+			Provider:   "claude-mem",
+			ProviderID: rec.nativeIDString(),
 			Author:     authorAttribution(),
-			SessionID:  rec.SessionID,
+			SessionID:  rec.MemorySessionID,
 		},
-		// SchemaVersion: NOT set — store.Append owns this (REQ-CM-11).
 	}, nil
 }
 
 // FromCanonical converts a store.CanonicalRecord to a native claudeMemRecord.
-// Pure: no I/O (REQ-CM-15). Implemented (not stubbed) so that v1.1 bidirectional
+// Pure: no I/O (REQ-CM-15). Implemented (not stubbed) so v1.1 bidirectional
 // reuse can use it verbatim. NEVER passed to WriteNative in v1 (ADR-10).
 //
-// NOTE: CreatedAt and UpdatedAt are intentionally omitted from the output.
-// claude-mem is read-only in v1 — there is no write surface and timestamps are
-// never persisted back. Any future write path (v1.1+) MUST re-read CreatedAt/
-// UpdatedAt from the provider, not round-trip from FromCanonical output
-// (FromCanonical omits timestamps by design).
+// NOTE: CreatedAt is intentionally omitted from the output — claude-mem is
+// read-only in v1, no write surface exists, timestamps are never persisted back.
+// Any future write path (v1.1+) MUST re-read CreatedAt from the provider, not
+// round-trip from FromCanonical output.
 func (a *ClaudeMemAdapter) FromCanonical(canonical store.CanonicalRecord) (adapter.NativeRecord, error) {
+	// Parse ProviderID back to int64 best-effort; 0 on malformed input. The
+	// resulting record is never persisted in v1 (ADR-10), so the loss-of-info
+	// path is acceptable.
+	var id int64
+	if canonical.Origin.ProviderID != "" {
+		parsed, perr := strconv.ParseInt(canonical.Origin.ProviderID, 10, 64)
+		if perr == nil {
+			id = parsed
+		}
+	}
 	return claudeMemRecord{
-		ID:        canonical.Origin.ProviderID,
-		SessionID: canonical.Origin.SessionID,
-		Title:     canonical.Title,
-		Summary:   canonical.Content,
-		Tags:      canonical.Tags,
-		// CreatedAt/UpdatedAt intentionally omitted — see doc comment above.
+		ID:              id,
+		MemorySessionID: canonical.Origin.SessionID,
+		Project:         "", // not represented in canonical record (filter, not payload)
+		Type:            canonical.Type,
+		Title:           canonical.Title,
+		Narrative:       canonical.Content,
+		// CreatedAt intentionally omitted — see doc comment above.
 	}, nil
 }
 
 // WriteNative always returns ErrUnsupported. claude-mem has no public write
-// surface in v1 (REQ-CM-03, ADR-10). No I/O, no state mutation.
-//
-// NOTE: any future write path MUST re-read CreatedAt/UpdatedAt from the
-// provider, not round-trip from FromCanonical output (FromCanonical omits
-// timestamps by design).
+// surface in v1 (REQ-CM-03, ADR-10).
 func (a *ClaudeMemAdapter) WriteNative(ctx context.Context, record adapter.NativeRecord) (adapter.NativeID, error) {
 	return "", fmt.Errorf("%w", adapter.ErrUnsupported)
 }

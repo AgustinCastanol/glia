@@ -153,13 +153,21 @@ func (t *httpTransport) ListPage(ctx context.Context, limit, offset int) ([]byte
 	return body, nil
 }
 
-// GetByID performs GET /api/observations/<id>.
-// Returns (body, true, nil) on 2xx.
-// Returns (nil, false, adapter.ErrNotFound) on 404.
-// Returns (nil, false, adapter.ErrUnavailable) on connection failure or other non-2xx,
-// signalling ReadNative to degrade to paginate+scan (ADR-5).
+// GetByID performs GET /api/observations?id=<id>.
+//
+// The claude-mem worker does NOT expose a path-style per-ID endpoint
+// (`/api/observations/:id` returns Express's "Cannot GET" 404 — verified
+// 2026-05-20). Instead, the id filter is a query parameter on the list
+// endpoint, which returns the standard envelope. We unwrap the envelope here
+// so callers receive the bare record body.
+//
+// Returns (recordBody, true, nil) when the envelope contains exactly one item.
+// Returns (nil, false, adapter.ErrNotFound) when the envelope is empty (definitive not-found).
+// Returns (nil, false, adapter.ErrUnavailable) on connection failure, non-2xx,
+// envelope decode error, or unexpected multi-item response — signalling
+// ReadNative to degrade to paginate+scan (ADR-5).
 func (t *httpTransport) GetByID(ctx context.Context, id string) ([]byte, bool, error) {
-	url := fmt.Sprintf("%s/api/observations/%s", t.baseURL, id)
+	url := fmt.Sprintf("%s/api/observations?id=%s", t.baseURL, id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, false, fmt.Errorf("%w: build get-by-id request: %v", adapter.ErrUnavailable, err)
@@ -170,20 +178,38 @@ func (t *httpTransport) GetByID(ctx context.Context, id string) ([]byte, bool, e
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, false, err
 		}
-		return nil, false, fmt.Errorf("%w: http get /api/observations/%s: %v", adapter.ErrUnavailable, id, err)
+		return nil, false, fmt.Errorf("%w: http get /api/observations?id=%s: %v", adapter.ErrUnavailable, id, err)
 	}
 	defer resp.Body.Close()
 
+	// The query endpoint returns 2xx with an empty items[] when the id doesn't
+	// exist — there is no 404 path. A 404 here would indicate the route itself
+	// is missing (degrade to scan via ErrUnavailable).
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, false, adapter.ErrNotFound
+		return nil, false, fmt.Errorf("%w: /api/observations route missing", adapter.ErrUnavailable)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, false, fmt.Errorf("%w: /api/observations/%s unexpected status %d", adapter.ErrUnavailable, id, resp.StatusCode)
+		return nil, false, fmt.Errorf("%w: /api/observations?id=%s unexpected status %d", adapter.ErrUnavailable, id, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: read /api/observations/%s body: %v", adapter.ErrUnavailable, id, err)
+		return nil, false, fmt.Errorf("%w: read /api/observations?id=%s body: %v", adapter.ErrUnavailable, id, err)
 	}
-	return body, true, nil
+
+	var envelope struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, false, fmt.Errorf("%w: decode envelope for id=%s: %v", adapter.ErrUnavailable, id, err)
+	}
+	switch len(envelope.Items) {
+	case 0:
+		return nil, false, adapter.ErrNotFound
+	case 1:
+		return []byte(envelope.Items[0]), true, nil
+	default:
+		return nil, false, fmt.Errorf("%w: /api/observations?id=%s returned %d items, expected ≤1",
+			adapter.ErrUnavailable, id, len(envelope.Items))
+	}
 }
