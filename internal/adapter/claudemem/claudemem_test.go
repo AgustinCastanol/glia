@@ -221,34 +221,43 @@ func TestHTTPTransport_ListPageUnavailable(t *testing.T) {
 // httpTransport.GetByID tests
 // ---------------------------------------------------------------------------
 
-// TestHTTPTransport_GetByIDOK verifies 2xx returns (body, true, nil).
+// TestHTTPTransport_GetByIDOK verifies 2xx with single-item envelope returns
+// the bare record body. claude-mem returns the standard list envelope when
+// queried by id (`?id=...`), and the transport unwraps it.
 func TestHTTPTransport_GetByIDOK(t *testing.T) {
-	fixture := `{"id":"obs-1","title":"Hello"}`
+	record := `{"id":1,"title":"Hello"}`
+	envelope := fmt.Sprintf(`{"items":[%s],"hasMore":false,"offset":0,"limit":1}`, record)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("id") != "1" {
+			t.Errorf("expected query id=1, got %q", r.URL.RawQuery)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, fixture)
+		fmt.Fprint(w, envelope)
 	}))
 	defer srv.Close()
 
 	tr := NewHTTPTransport(srv.URL)
-	body, found, err := tr.GetByID(context.Background(), "obs-1")
+	body, found, err := tr.GetByID(context.Background(), "1")
 	if err != nil || !found {
 		t.Fatalf("expected (body, true, nil), got (%v, %v, %v)", body, found, err)
 	}
-	if string(body) != fixture {
-		t.Fatalf("body mismatch: got %q", string(body))
+	if string(body) != record {
+		t.Fatalf("body mismatch: got %q, want %q", string(body), record)
 	}
 }
 
-// TestHTTPTransport_GetByIDNotFound verifies 404 returns (nil, false, ErrNotFound).
+// TestHTTPTransport_GetByIDNotFound verifies an empty items[] envelope (2xx with
+// 0 results) returns ErrNotFound. This is the only clean not-found path —
+// claude-mem does not 404 on a missing id, it returns an empty envelope.
 func TestHTTPTransport_GetByIDNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"items":[],"hasMore":false,"offset":0,"limit":0}`)
 	}))
 	defer srv.Close()
 
 	tr := NewHTTPTransport(srv.URL)
-	body, found, err := tr.GetByID(context.Background(), "missing")
+	body, found, err := tr.GetByID(context.Background(), "9999")
 	if found || body != nil {
 		t.Fatal("expected found=false and nil body")
 	}
@@ -257,8 +266,26 @@ func TestHTTPTransport_GetByIDNotFound(t *testing.T) {
 	}
 }
 
-// TestHTTPTransport_GetByIDUnavailable verifies non-2xx/non-404 maps to
-// ErrUnavailable (signals ReadNative to degrade — ADR-5).
+// TestHTTPTransport_GetByIDRouteMissing verifies a 404 from the worker is
+// treated as ErrUnavailable (route missing), not ErrNotFound. This signals
+// ReadNative to degrade to paginate+scan (ADR-5).
+func TestHTTPTransport_GetByIDRouteMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	tr := NewHTTPTransport(srv.URL)
+	body, found, err := tr.GetByID(context.Background(), "1")
+	if found || body != nil {
+		t.Fatal("expected found=false and nil body")
+	}
+	if !isUnavailable(err) {
+		t.Fatalf("expected ErrUnavailable (route missing), got %v", err)
+	}
+}
+
+// TestHTTPTransport_GetByIDUnavailable verifies non-2xx maps to ErrUnavailable.
 func TestHTTPTransport_GetByIDUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -266,7 +293,7 @@ func TestHTTPTransport_GetByIDUnavailable(t *testing.T) {
 	defer srv.Close()
 
 	tr := NewHTTPTransport(srv.URL)
-	body, found, err := tr.GetByID(context.Background(), "obs-1")
+	body, found, err := tr.GetByID(context.Background(), "1")
 	if found || body != nil {
 		t.Fatal("expected found=false and nil body")
 	}
@@ -351,15 +378,18 @@ func (f *fakeIDMap) NativeFromCanonical(id adapter.CanonicalID) (adapter.NativeI
 func newAdapter() *ClaudeMemAdapter { return New(panicTransport{}) }
 
 // makeRec builds a claudeMemRecord with Raw populated from its own JSON.
-func makeRec(id, sessionID, title, summary string, tags []string, createdAt, updatedAt string) claudeMemRecord {
+// Signature reflects the verified live shape (2026-05-20): numeric id,
+// memory_session_id, project (name), type vocab, narrative as content,
+// created_at only (no updated_at).
+func makeRec(id int64, memorySessionID, title, narrative, recType, project, createdAt string) claudeMemRecord {
 	rec := claudeMemRecord{
-		ID:        id,
-		SessionID: sessionID,
-		Title:     title,
-		Summary:   summary,
-		Tags:      tags,
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+		ID:              id,
+		MemorySessionID: memorySessionID,
+		Project:         project,
+		Type:            recType,
+		Title:           title,
+		Narrative:       narrative,
+		CreatedAt:       createdAt,
 	}
 	raw, _ := json.Marshal(rec)
 	rec.Raw = json.RawMessage(raw)
@@ -533,10 +563,12 @@ func TestWrapIDMap_NativeFromCanonical(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestToCanonical_HappyPath verifies Scenario A: all fields populated, new record.
+// Uses verified shape (2026-05-20): type vocab passed through; tags always empty;
+// UpdatedAt mirrors CreatedAt (claude-mem is append-only, D7).
 func TestToCanonical_HappyPath(t *testing.T) {
 	a := newAdapter()
-	rec := makeRec("obs-1", "sess-42", "My Title", "Full summary here.", []string{"go", "test"},
-		"2026-05-16T15:04:05Z", "2026-05-17T10:00:00Z")
+	rec := makeRec(1, "sess-42", "My Title", "Full narrative here.", "discovery", "proj",
+		"2026-05-16T15:04:05Z")
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	got, err := a.ToCanonical(rec, idmap)
@@ -545,13 +577,13 @@ func TestToCanonical_HappyPath(t *testing.T) {
 	}
 
 	if got.Kind != "session_summary" {
-		t.Errorf("Kind: got %q, want %q", got.Kind, "session_summary")
+		t.Errorf("Kind: got %q, want %q (ADR-9 invariant)", got.Kind, "session_summary")
 	}
 	if got.Origin.Provider != "claude-mem" {
 		t.Errorf("Origin.Provider: got %q, want %q", got.Origin.Provider, "claude-mem")
 	}
-	if got.Origin.ProviderID != "obs-1" {
-		t.Errorf("Origin.ProviderID: got %q, want %q", got.Origin.ProviderID, "obs-1")
+	if got.Origin.ProviderID != "1" {
+		t.Errorf("Origin.ProviderID: got %q, want %q", got.Origin.ProviderID, "1")
 	}
 	if got.Origin.SessionID != "sess-42" {
 		t.Errorf("Origin.SessionID: got %q, want %q", got.Origin.SessionID, "sess-42")
@@ -559,8 +591,8 @@ func TestToCanonical_HappyPath(t *testing.T) {
 	if got.Title != "My Title" {
 		t.Errorf("Title: got %q, want %q", got.Title, "My Title")
 	}
-	if got.Content != "Full summary here." {
-		t.Errorf("Content: got %q, want %q", got.Content, "Full summary here.")
+	if got.Content != "Full narrative here." {
+		t.Errorf("Content: got %q, want %q", got.Content, "Full narrative here.")
 	}
 	if got.ContentFormat != "markdown" {
 		t.Errorf("ContentFormat: got %q, want %q", got.ContentFormat, "markdown")
@@ -571,8 +603,9 @@ func TestToCanonical_HappyPath(t *testing.T) {
 	if got.CanonicalID != "" {
 		t.Errorf("CanonicalID: expected empty for new record, got %q", got.CanonicalID)
 	}
-	if got.Type != "" {
-		t.Errorf("Type: expected empty, got %q", got.Type)
+	// Type now preserves the claude-mem vocabulary (decision 1A, 2026-05-20).
+	if got.Type != "discovery" {
+		t.Errorf("Type: got %q, want %q (claude-mem vocab pass-through)", got.Type, "discovery")
 	}
 	if got.TopicKey != "" {
 		t.Errorf("TopicKey: expected empty, got %q", got.TopicKey)
@@ -580,25 +613,26 @@ func TestToCanonical_HappyPath(t *testing.T) {
 	if got.SchemaVersion != 0 {
 		t.Errorf("SchemaVersion: must not be set by adapter, got %d", got.SchemaVersion)
 	}
-	if len(got.Tags) != 2 || got.Tags[0] != "go" || got.Tags[1] != "test" {
-		t.Errorf("Tags: got %v, want [go test]", got.Tags)
+	// claude-mem has no native tags; canonical Tags is always [].
+	if got.Tags == nil || len(got.Tags) != 0 {
+		t.Errorf("Tags: got %v, want [] (claude-mem has no native tags)", got.Tags)
 	}
-	// Timestamps must be in rfc3339NanoFixed format.
-	wantCreated := "2026-05-16T15:04:05.000000000Z"
-	if got.CreatedAt != wantCreated {
-		t.Errorf("CreatedAt: got %q, want %q", got.CreatedAt, wantCreated)
+	// Timestamps must be in rfc3339NanoFixed format; UpdatedAt mirrors CreatedAt (D7).
+	want := "2026-05-16T15:04:05.000000000Z"
+	if got.CreatedAt != want {
+		t.Errorf("CreatedAt: got %q, want %q", got.CreatedAt, want)
 	}
-	wantUpdated := "2026-05-17T10:00:00.000000000Z"
-	if got.UpdatedAt != wantUpdated {
-		t.Errorf("UpdatedAt: got %q, want %q", got.UpdatedAt, wantUpdated)
+	if got.UpdatedAt != want {
+		t.Errorf("UpdatedAt: got %q, want %q (must mirror CreatedAt — D7)", got.UpdatedAt, want)
 	}
 }
 
-// TestToCanonical_TitleDeriveFallback verifies Scenario B: title derived from summary.
+// TestToCanonical_TitleDeriveFallback verifies Scenario B: title derived from narrative
+// when both Title and Subtitle are empty.
 func TestToCanonical_TitleDeriveFallback(t *testing.T) {
 	a := newAdapter()
-	rec := makeRec("obs-2", "", "", "This is a session summary that should become the title.", nil,
-		"2026-05-16T15:04:05Z", "2026-05-16T15:04:05Z")
+	rec := makeRec(2, "", "", "This is a session narrative that should become the title.", "", "",
+		"2026-05-16T15:04:05Z")
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	got, err := a.ToCanonical(rec, idmap)
@@ -606,22 +640,40 @@ func TestToCanonical_TitleDeriveFallback(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.Title == "" {
-		t.Fatal("Title must be non-empty (derived from summary)")
+		t.Fatal("Title must be non-empty (derived from narrative)")
 	}
-	// The derived title must be a prefix of the summary (or equal when short enough).
-	// Args order: strings.HasPrefix(s, prefix) — got.Title is the prefix of the full summary.
-	if !strings.HasPrefix("This is a session summary that should become the title.", got.Title) {
-		t.Errorf("Title %q is not a prefix of summary", got.Title)
+	if !strings.HasPrefix("This is a session narrative that should become the title.", got.Title) {
+		t.Errorf("Title %q is not a prefix of narrative", got.Title)
 	}
 }
 
-// TestToCanonical_TitleTruncatesLongSummary verifies that a summary longer than
-// titleMaxRunes is truncated to exactly titleMaxRunes runes (REQ-CM-12).
-func TestToCanonical_TitleTruncatesLongSummary(t *testing.T) {
+// TestToCanonical_TitleDeriveFromSubtitle verifies that Subtitle is used as the
+// second-tier fallback when Title is empty but Subtitle is present.
+func TestToCanonical_TitleDeriveFromSubtitle(t *testing.T) {
 	a := newAdapter()
-	longSummary := strings.Repeat("a", titleMaxRunes+20)
-	rec := makeRec("obs-trunc", "", "", longSummary, nil,
-		"2026-05-16T15:04:05Z", "2026-05-16T15:04:05Z")
+	rec := claudeMemRecord{
+		ID:        99,
+		Subtitle:  "Subtitle as fallback title",
+		Narrative: "Long narrative body that should NOT be used when subtitle exists.",
+		CreatedAt: "2026-05-16T15:04:05Z",
+	}
+	idmap := &fakeIDMap{m: map[string]string{}}
+
+	got, err := a.ToCanonical(rec, idmap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Title != "Subtitle as fallback title" {
+		t.Errorf("Title: got %q, want %q (Subtitle fallback)", got.Title, "Subtitle as fallback title")
+	}
+}
+
+// TestToCanonical_TitleTruncatesLongNarrative verifies that a narrative longer than
+// titleMaxRunes is truncated to exactly titleMaxRunes runes (REQ-CM-12).
+func TestToCanonical_TitleTruncatesLongNarrative(t *testing.T) {
+	a := newAdapter()
+	longNarrative := strings.Repeat("a", titleMaxRunes+20)
+	rec := makeRec(3, "", "", longNarrative, "", "", "2026-05-16T15:04:05Z")
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	got, err := a.ToCanonical(rec, idmap)
@@ -632,29 +684,29 @@ func TestToCanonical_TitleTruncatesLongSummary(t *testing.T) {
 	if runeCount != titleMaxRunes {
 		t.Errorf("Title rune count: got %d, want %d", runeCount, titleMaxRunes)
 	}
-	// The truncated title must be a prefix of the original summary.
-	if !strings.HasPrefix(longSummary, got.Title) {
-		t.Errorf("Truncated title %q is not a prefix of original summary", got.Title)
+	if !strings.HasPrefix(longNarrative, got.Title) {
+		t.Errorf("Truncated title %q is not a prefix of original narrative", got.Title)
 	}
 }
 
-// TestToCanonical_EmptyTitleAndSummary_NoError verifies Scenario L: no error even when both are empty.
-func TestToCanonical_EmptyTitleAndSummary_NoError(t *testing.T) {
+// TestToCanonical_EmptyTitleAndNarrative_NoError verifies Scenario L: no error
+// even when both Title and Narrative are empty (only a forensic WARN is logged).
+func TestToCanonical_EmptyTitleAndNarrative_NoError(t *testing.T) {
 	a := newAdapter()
-	rawBytes, _ := json.Marshal(map[string]string{"id": "obs-empty"})
-	rec := claudeMemRecord{ID: "obs-empty", Raw: rawBytes}
+	rawBytes, _ := json.Marshal(map[string]int64{"id": 7})
+	rec := claudeMemRecord{ID: 7, Raw: rawBytes}
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	_, err := a.ToCanonical(rec, idmap)
 	if err != nil {
-		t.Fatalf("expected no error for empty title+summary, got: %v", err)
+		t.Fatalf("expected no error for empty title+narrative, got: %v", err)
 	}
 }
 
 // TestToCanonical_TimestampSQLite verifies Scenario H: SQLite layout normalized correctly.
 func TestToCanonical_TimestampSQLite(t *testing.T) {
 	a := newAdapter()
-	rec := makeRec("obs-3", "", "T", "s", nil, "2026-05-16 15:04:05", "2026-05-16 15:04:05")
+	rec := makeRec(4, "", "T", "n", "", "", "2026-05-16 15:04:05")
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	got, err := a.ToCanonical(rec, idmap)
@@ -665,12 +717,15 @@ func TestToCanonical_TimestampSQLite(t *testing.T) {
 	if got.CreatedAt != want {
 		t.Errorf("CreatedAt: got %q, want %q", got.CreatedAt, want)
 	}
+	if got.UpdatedAt != want {
+		t.Errorf("UpdatedAt: got %q, want %q (must mirror CreatedAt — D7)", got.UpdatedAt, want)
+	}
 }
 
 // TestToCanonical_UnknownTimestamp_ReturnsError verifies ADR-6 failure mode.
 func TestToCanonical_UnknownTimestamp_ReturnsError(t *testing.T) {
 	a := newAdapter()
-	rec := makeRec("obs-4", "", "T", "s", nil, "not-a-date", "2026-05-16T15:04:05Z")
+	rec := makeRec(5, "", "T", "n", "", "", "not-a-date")
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	_, err := a.ToCanonical(rec, idmap)
@@ -682,7 +737,7 @@ func TestToCanonical_UnknownTimestamp_ReturnsError(t *testing.T) {
 // TestToCanonical_IDMap_NewRecord verifies Scenario J: new record → empty CanonicalID, revision=1.
 func TestToCanonical_IDMap_NewRecord(t *testing.T) {
 	a := newAdapter()
-	rec := makeRec("obs-new", "", "T", "s", nil, "2026-05-16T15:04:05Z", "2026-05-16T15:04:05Z")
+	rec := makeRec(10, "", "T", "n", "", "", "2026-05-16T15:04:05Z")
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	got, err := a.ToCanonical(rec, idmap)
@@ -699,11 +754,11 @@ func TestToCanonical_IDMap_NewRecord(t *testing.T) {
 
 // TestToCanonical_IDMap_KnownRecord verifies Scenario I: known record → CanonicalID set,
 // revision == -1 (sentinel: "prior mapping exists; PRD-3 orchestrator must assign final value").
-// This matches the engram adapter's cross-adapter convention (CRITICAL-02 alignment).
+// Matches the engram adapter's cross-adapter convention (ADR-12).
 func TestToCanonical_IDMap_KnownRecord(t *testing.T) {
 	a := newAdapter()
-	rec := makeRec("obs-42", "", "T", "s", nil, "2026-05-16T15:04:05Z", "2026-05-16T15:04:05Z")
-	idmap := &fakeIDMap{m: map[string]string{"obs-42": "C1"}}
+	rec := makeRec(42, "", "T", "n", "", "", "2026-05-16T15:04:05Z")
+	idmap := &fakeIDMap{m: map[string]string{"42": "C1"}}
 
 	got, err := a.ToCanonical(rec, idmap)
 	if err != nil {
@@ -712,9 +767,6 @@ func TestToCanonical_IDMap_KnownRecord(t *testing.T) {
 	if got.CanonicalID != "C1" {
 		t.Errorf("CanonicalID: got %q, want %q", got.CanonicalID, "C1")
 	}
-	// revision == -1 is the shared cross-adapter sentinel meaning
-	// "known record; PRD-3 orchestrator must replace with priorRevision+1".
-	// Consistent with internal/adapter/engram/engram.go ~378.
 	if got.Revision != -1 {
 		t.Errorf("Revision: got %d, want -1 (sentinel for known record)", got.Revision)
 	}
@@ -730,10 +782,11 @@ func TestToCanonical_WrongNativeType_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestToCanonical_NilTags_EmptySlice verifies nil tags become empty slice (JSON-safe).
-func TestToCanonical_NilTags_EmptySlice(t *testing.T) {
+// TestToCanonical_Tags_AlwaysEmpty verifies decision D4: canonical Tags is always
+// [] (non-nil empty slice) regardless of input. claude-mem has no native tags.
+func TestToCanonical_Tags_AlwaysEmpty(t *testing.T) {
 	a := newAdapter()
-	rec := makeRec("obs-5", "", "T", "s", nil, "2026-05-16T15:04:05Z", "2026-05-16T15:04:05Z")
+	rec := makeRec(6, "", "T", "n", "", "", "2026-05-16T15:04:05Z")
 	idmap := &fakeIDMap{m: map[string]string{}}
 
 	got, err := a.ToCanonical(rec, idmap)
@@ -741,7 +794,32 @@ func TestToCanonical_NilTags_EmptySlice(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.Tags == nil {
-		t.Error("Tags must be non-nil (empty slice, not nil) for JSON marshalling safety")
+		t.Fatal("Tags must be non-nil empty slice (JSON marshalling safety)")
+	}
+	if len(got.Tags) != 0 {
+		t.Errorf("Tags must be empty (claude-mem has no native tags); got %v", got.Tags)
+	}
+}
+
+// TestToCanonical_TypePassThrough verifies decision 1A: claude-mem `type` vocab
+// is preserved verbatim in canonical Type. Kind stays "session_summary" (ADR-9).
+func TestToCanonical_TypePassThrough(t *testing.T) {
+	a := newAdapter()
+	cases := []string{"discovery", "feature", "bugfix", "decision", "session_summary", "architecture"}
+	for _, vocab := range cases {
+		t.Run(vocab, func(t *testing.T) {
+			rec := makeRec(int64(100), "", "T", "n", vocab, "", "2026-05-16T15:04:05Z")
+			got, err := a.ToCanonical(rec, &fakeIDMap{m: map[string]string{}})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Type != vocab {
+				t.Errorf("Type: got %q, want %q (claude-mem vocab pass-through)", got.Type, vocab)
+			}
+			if got.Kind != "session_summary" {
+				t.Errorf("Kind: got %q, want %q (ADR-9 invariant — Kind never varies)", got.Kind, "session_summary")
+			}
+		})
 	}
 }
 
@@ -753,8 +831,8 @@ func TestToCanonical_NilTags_EmptySlice(t *testing.T) {
 func TestFromCanonical_HappyPath(t *testing.T) {
 	a := newAdapter()
 
-	canonical := toCanonicalOrFatal(t, a, makeRec("obs-fc", "sess-1", "Round-trip title", "Round-trip summary.",
-		[]string{"x"}, "2026-05-16T15:04:05Z", "2026-05-16T15:04:05Z"), &fakeIDMap{m: map[string]string{}})
+	canonical := toCanonicalOrFatal(t, a, makeRec(77, "sess-1", "Round-trip title", "Round-trip narrative.",
+		"decision", "", "2026-05-16T15:04:05Z"), &fakeIDMap{m: map[string]string{}})
 
 	native, err := a.FromCanonical(canonical)
 	if err != nil {
@@ -764,39 +842,41 @@ func TestFromCanonical_HappyPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("FromCanonical: expected claudeMemRecord, got %T", native)
 	}
-	if back.ID != "obs-fc" {
-		t.Errorf("ID: got %q, want %q", back.ID, "obs-fc")
+	if back.ID != 77 {
+		t.Errorf("ID: got %d, want %d", back.ID, 77)
 	}
-	if back.SessionID != "sess-1" {
-		t.Errorf("SessionID: got %q, want %q", back.SessionID, "sess-1")
+	if back.MemorySessionID != "sess-1" {
+		t.Errorf("MemorySessionID: got %q, want %q", back.MemorySessionID, "sess-1")
 	}
 	if back.Title != "Round-trip title" {
 		t.Errorf("Title: got %q, want %q", back.Title, "Round-trip title")
 	}
-	if back.Summary != "Round-trip summary." {
-		t.Errorf("Summary: got %q, want %q", back.Summary, "Round-trip summary.")
+	if back.Narrative != "Round-trip narrative." {
+		t.Errorf("Narrative: got %q, want %q", back.Narrative, "Round-trip narrative.")
+	}
+	if back.Type != "decision" {
+		t.Errorf("Type: got %q, want %q", back.Type, "decision")
 	}
 }
 
 // TestFromCanonical_NoTransportCalls verifies purity: panicTransport must not fire.
 func TestFromCanonical_NoTransportCalls(t *testing.T) {
-	a := newAdapter() // backed by panicTransport
-	canonical := toCanonicalOrFatal(t, a, makeRec("obs-pure", "", "T", "s", nil,
-		"2026-05-16T15:04:05Z", "2026-05-16T15:04:05Z"), &fakeIDMap{m: map[string]string{}})
+	a := newAdapter()
+	canonical := toCanonicalOrFatal(t, a, makeRec(11, "", "T", "n", "", "", "2026-05-16T15:04:05Z"),
+		&fakeIDMap{m: map[string]string{}})
 
-	// If FromCanonical calls Transport, the test panics — proving purity.
 	if _, err := a.FromCanonical(canonical); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-// TestFromCanonical_OmitsTimestamps verifies WARNING-03 contract: FromCanonical
-// intentionally omits CreatedAt and UpdatedAt. Any future write path must re-read
-// timestamps from the provider rather than round-tripping through FromCanonical.
+// TestFromCanonical_OmitsTimestamps verifies the read-only contract: FromCanonical
+// intentionally omits CreatedAt. Any future write path must re-read timestamps from
+// the provider rather than round-tripping through FromCanonical.
 func TestFromCanonical_OmitsTimestamps(t *testing.T) {
 	a := newAdapter()
-	canonical := toCanonicalOrFatal(t, a, makeRec("obs-ts", "", "T", "s", nil,
-		"2026-05-16T15:04:05Z", "2026-05-17T10:00:00Z"), &fakeIDMap{m: map[string]string{}})
+	canonical := toCanonicalOrFatal(t, a, makeRec(12, "", "T", "n", "", "", "2026-05-16T15:04:05Z"),
+		&fakeIDMap{m: map[string]string{}})
 
 	native, err := a.FromCanonical(canonical)
 	if err != nil {
@@ -806,13 +886,8 @@ func TestFromCanonical_OmitsTimestamps(t *testing.T) {
 	if !ok {
 		t.Fatalf("FromCanonical: expected claudeMemRecord, got %T", native)
 	}
-	// By design: timestamps are omitted from FromCanonical output (read-only v1,
-	// no write surface). A future write path must NOT rely on these fields.
 	if back.CreatedAt != "" {
 		t.Errorf("FromCanonical must omit CreatedAt, got %q", back.CreatedAt)
-	}
-	if back.UpdatedAt != "" {
-		t.Errorf("FromCanonical must omit UpdatedAt, got %q", back.UpdatedAt)
 	}
 }
 
@@ -900,17 +975,21 @@ func (f *fakeTransport) GetByID(_ context.Context, id string) ([]byte, bool, err
 }
 
 // makeRawItem encodes a claudeMemRecord as a json.RawMessage for use in fakeTransport pages.
-func makeRawItem(id, projectID, updatedAt string) json.RawMessage {
+// Uses verified live field names: numeric id, project (name), created_at as the
+// since-filter source (no updated_at exists in the API — D7).
+func makeRawItem(id int64, project, createdAt string) json.RawMessage {
 	b, _ := json.Marshal(claudeMemRecord{
 		ID:        id,
-		ProjectID: projectID,
-		Title:     "title-" + id,
-		Summary:   "summary-" + id,
-		UpdatedAt: updatedAt,
-		CreatedAt: "2026-05-16T10:00:00Z",
+		Project:   project,
+		Title:     fmt.Sprintf("title-%d", id),
+		Narrative: fmt.Sprintf("narrative-%d", id),
+		CreatedAt: createdAt,
 	})
 	return b
 }
+
+// idStr is a convenience for tests comparing adapter.NativeID against int64 ids.
+func idStr(id int64) string { return fmt.Sprintf("%d", id) }
 
 // ---------------------------------------------------------------------------
 // Health tests (T-12)
@@ -983,24 +1062,26 @@ func TestListNative_ThreePagePagination_ProjectFilter(t *testing.T) {
 	// Page 1: 60 "my-project" + 40 "other" (total 100, HasMore=true)
 	// Page 2: 100 "my-project" items (HasMore=true)
 	// Page 3: 50 "my-project" items (HasMore=false)
-	updatedAt := "2026-05-16T10:00:00Z"
+	createdAt := "2026-05-16T10:00:00Z"
 
+	// IDs are partitioned by range so the test can identify the project of each
+	// returned ID without parsing: 100000+ = my-project, 200000+ = other.
 	var p1 []json.RawMessage
 	for i := 0; i < 60; i++ {
-		p1 = append(p1, makeRawItem(fmt.Sprintf("mp1-%d", i), "my-project", updatedAt))
+		p1 = append(p1, makeRawItem(int64(100000+i), "my-project", createdAt))
 	}
 	for i := 0; i < 40; i++ {
-		p1 = append(p1, makeRawItem(fmt.Sprintf("ot1-%d", i), "other-project", updatedAt))
+		p1 = append(p1, makeRawItem(int64(200000+i), "other-project", createdAt))
 	}
 
 	var p2 []json.RawMessage
 	for i := 0; i < 100; i++ {
-		p2 = append(p2, makeRawItem(fmt.Sprintf("mp2-%d", i), "my-project", updatedAt))
+		p2 = append(p2, makeRawItem(int64(110000+i), "my-project", createdAt))
 	}
 
 	var p3 []json.RawMessage
 	for i := 0; i < 50; i++ {
-		p3 = append(p3, makeRawItem(fmt.Sprintf("mp3-%d", i), "my-project", updatedAt))
+		p3 = append(p3, makeRawItem(int64(120000+i), "my-project", createdAt))
 	}
 
 	ft := &fakeTransport{pages: buildPages(p1, p2, p3)}
@@ -1012,7 +1093,6 @@ func TestListNative_ThreePagePagination_ProjectFilter(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Must make exactly 3 ListPage calls with offsets 0, 100, 200.
 	if len(ft.listPageCalls) != 3 {
 		t.Fatalf("expected 3 ListPage calls, got %d", len(ft.listPageCalls))
 	}
@@ -1029,29 +1109,31 @@ func TestListNative_ThreePagePagination_ProjectFilter(t *testing.T) {
 		t.Fatalf("expected 210 my-project IDs, got %d", len(ids))
 	}
 	for _, id := range ids {
+		// my-project IDs fall in 100000-119999; other-project in 200000+.
 		s := string(id)
-		if !strings.HasPrefix(s, "mp") {
+		if strings.HasPrefix(s, "2") {
 			t.Errorf("non-my-project ID leaked: %q", s)
 		}
 	}
 }
 
 // TestListNative_SinceFilter verifies Scenario E: 4 records before since discarded,
-// 6 records after since retained.
+// 6 records after since retained. The filter is rebased on created_at (D7).
+// IDs <1000 are "old" (before cutoff); IDs >=1000 are "new".
 func TestListNative_SinceFilter(t *testing.T) {
 	cutoff := "2026-05-16T12:00:00Z"
 
 	items := []json.RawMessage{
-		makeRawItem("old-1", "proj", "2026-05-16T10:00:00Z"),
-		makeRawItem("old-2", "proj", "2026-05-16T11:00:00Z"),
-		makeRawItem("old-3", "proj", "2026-05-16T11:30:00Z"),
-		makeRawItem("old-4", "proj", "2026-05-16T11:59:59Z"),
-		makeRawItem("new-1", "proj", "2026-05-16T12:00:00Z"),
-		makeRawItem("new-2", "proj", "2026-05-16T13:00:00Z"),
-		makeRawItem("new-3", "proj", "2026-05-16T14:00:00Z"),
-		makeRawItem("new-4", "proj", "2026-05-17T00:00:00Z"),
-		makeRawItem("new-5", "proj", "2026-05-17T10:00:00Z"),
-		makeRawItem("new-6", "proj", "2026-05-18T00:00:00Z"),
+		makeRawItem(1, "proj", "2026-05-16T10:00:00Z"),
+		makeRawItem(2, "proj", "2026-05-16T11:00:00Z"),
+		makeRawItem(3, "proj", "2026-05-16T11:30:00Z"),
+		makeRawItem(4, "proj", "2026-05-16T11:59:59Z"),
+		makeRawItem(1001, "proj", "2026-05-16T12:00:00Z"),
+		makeRawItem(1002, "proj", "2026-05-16T13:00:00Z"),
+		makeRawItem(1003, "proj", "2026-05-16T14:00:00Z"),
+		makeRawItem(1004, "proj", "2026-05-17T00:00:00Z"),
+		makeRawItem(1005, "proj", "2026-05-17T10:00:00Z"),
+		makeRawItem(1006, "proj", "2026-05-18T00:00:00Z"),
 	}
 
 	ft := &fakeTransport{pages: buildPages(items)}
@@ -1066,24 +1148,26 @@ func TestListNative_SinceFilter(t *testing.T) {
 		t.Fatalf("expected 6 IDs after since filter, got %d: %v", len(ids), ids)
 	}
 	for _, id := range ids {
-		if !strings.HasPrefix(string(id), "new-") {
+		s := string(id)
+		if len(s) < 4 {
 			t.Errorf("old record should have been filtered: %q", id)
 		}
 	}
 }
 
 // TestListNative_CrossProjectIsolation verifies Scenario G: only proj-B records
-// returned when proj-A, proj-B, proj-C are intermixed.
+// returned when proj-A, proj-B, proj-C are intermixed. IDs <2000 = A, 2000-2999 = B,
+// 3000+ = C — chosen so the assertion can identify project from the returned ID.
 func TestListNative_CrossProjectIsolation(t *testing.T) {
-	updatedAt := "2026-05-16T10:00:00Z"
+	createdAt := "2026-05-16T10:00:00Z"
 	items := []json.RawMessage{
-		makeRawItem("a-1", "proj-A", updatedAt),
-		makeRawItem("b-1", "proj-B", updatedAt),
-		makeRawItem("c-1", "proj-C", updatedAt),
-		makeRawItem("a-2", "proj-A", updatedAt),
-		makeRawItem("b-2", "proj-B", updatedAt),
-		makeRawItem("c-2", "proj-C", updatedAt),
-		makeRawItem("b-3", "proj-B", updatedAt),
+		makeRawItem(1001, "proj-A", createdAt),
+		makeRawItem(2001, "proj-B", createdAt),
+		makeRawItem(3001, "proj-C", createdAt),
+		makeRawItem(1002, "proj-A", createdAt),
+		makeRawItem(2002, "proj-B", createdAt),
+		makeRawItem(3002, "proj-C", createdAt),
+		makeRawItem(2003, "proj-B", createdAt),
 	}
 
 	ft := &fakeTransport{pages: buildPages(items)}
@@ -1097,24 +1181,22 @@ func TestListNative_CrossProjectIsolation(t *testing.T) {
 		t.Fatalf("expected 3 proj-B IDs, got %d", len(ids))
 	}
 	for _, id := range ids {
-		if !strings.HasPrefix(string(id), "b-") {
+		s := string(id)
+		if !strings.HasPrefix(s, "2") {
 			t.Errorf("non-proj-B ID leaked: %q", id)
 		}
 	}
 }
 
 // TestListNative_TimestampNormalization verifies Scenario H: SQLite-format
-// updated_at is normalized correctly and passes the since filter as expected.
+// created_at is normalized correctly and passes the since filter as expected.
 func TestListNative_TimestampNormalization(t *testing.T) {
-	// Record with SQLite format "2026-05-16 15:04:05" must normalize and
-	// pass a since of 2026-05-16T14:00:00Z.
 	sqliteItem, _ := json.Marshal(claudeMemRecord{
-		ID:        "sqlite-obs",
-		ProjectID: "proj",
+		ID:        500,
+		Project:   "proj",
 		Title:     "t",
-		Summary:   "s",
-		UpdatedAt: "2026-05-16 15:04:05", // SQLite layout (ADR-6)
-		CreatedAt: "2026-05-16T10:00:00Z",
+		Narrative: "n",
+		CreatedAt: "2026-05-16 15:04:05", // SQLite layout (ADR-6)
 	})
 
 	ft := &fakeTransport{pages: buildPages([]json.RawMessage{sqliteItem})}
@@ -1125,23 +1207,23 @@ func TestListNative_TimestampNormalization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(ids) != 1 || ids[0] != "sqlite-obs" {
-		t.Fatalf("expected [sqlite-obs], got %v", ids)
+	if len(ids) != 1 || string(ids[0]) != "500" {
+		t.Fatalf("expected [500], got %v", ids)
 	}
 }
 
-// TestListNative_UnparseableUpdatedAt_Skipped verifies ADR-6 discipline: a record
-// with an unparseable updated_at is skipped (warn logged) and never stored.
-func TestListNative_UnparseableUpdatedAt_Skipped(t *testing.T) {
+// TestListNative_UnparseableCreatedAt_Skipped verifies ADR-6 discipline: a record
+// with an unparseable created_at is skipped (warn logged) and never stored.
+// Rebased from updated_at to created_at (D7).
+func TestListNative_UnparseableCreatedAt_Skipped(t *testing.T) {
 	badItem, _ := json.Marshal(claudeMemRecord{
-		ID:        "bad-ts",
-		ProjectID: "proj",
+		ID:        666,
+		Project:   "proj",
 		Title:     "t",
-		Summary:   "s",
-		UpdatedAt: "not-a-timestamp",
-		CreatedAt: "2026-05-16T10:00:00Z",
+		Narrative: "n",
+		CreatedAt: "not-a-timestamp",
 	})
-	goodItem := makeRawItem("good-1", "proj", "2026-05-17T10:00:00Z")
+	goodItem := makeRawItem(777, "proj", "2026-05-17T10:00:00Z")
 
 	ft := &fakeTransport{pages: buildPages([]json.RawMessage{badItem, goodItem})}
 	a := New(ft)
@@ -1150,9 +1232,8 @@ func TestListNative_UnparseableUpdatedAt_Skipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// "bad-ts" must be skipped; "good-1" must be present.
-	if len(ids) != 1 || ids[0] != "good-1" {
-		t.Fatalf("expected [good-1], got %v", ids)
+	if len(ids) != 1 || string(ids[0]) != "777" {
+		t.Fatalf("expected [777], got %v", ids)
 	}
 }
 
@@ -1208,11 +1289,10 @@ func TestListNative_EmptyPageWithHasMoreTrue_Terminates(t *testing.T) {
 // GetByID succeeds.
 func TestReadNative_HappyPath_PerID(t *testing.T) {
 	bodyBytes, _ := json.Marshal(claudeMemRecord{
-		ID:        "obs-1",
-		ProjectID: "proj",
+		ID:        1,
+		Project:   "proj",
 		Title:     "My Title",
-		Summary:   "My Summary",
-		UpdatedAt: "2026-05-16T10:00:00Z",
+		Narrative: "My Narrative",
 		CreatedAt: "2026-05-16T09:00:00Z",
 	})
 
@@ -1222,7 +1302,7 @@ func TestReadNative_HappyPath_PerID(t *testing.T) {
 	}
 	a := New(ft)
 
-	rec, err := a.ReadNative(context.Background(), "obs-1")
+	rec, err := a.ReadNative(context.Background(), "1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1230,15 +1310,14 @@ func TestReadNative_HappyPath_PerID(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected claudeMemRecord, got %T", rec)
 	}
-	if got.ID != "obs-1" {
-		t.Errorf("ID: got %q, want %q", got.ID, "obs-1")
+	if got.ID != 1 {
+		t.Errorf("ID: got %d, want %d", got.ID, 1)
 	}
 	if got.Raw == nil {
 		t.Error("Raw must be populated on ReadNative")
 	}
-	// W-5: verify the correct id was forwarded to GetByID.
-	if ft.getByIDReceivedID != "obs-1" {
-		t.Errorf("GetByID received id %q, want %q", ft.getByIDReceivedID, "obs-1")
+	if ft.getByIDReceivedID != "1" {
+		t.Errorf("GetByID received id %q, want %q", ft.getByIDReceivedID, "1")
 	}
 }
 
@@ -1260,17 +1339,17 @@ func TestReadNative_CleanNotFound_ErrNotFound(t *testing.T) {
 // ErrUnavailable, ReadNative degrades to paginate+scan and finds the record.
 func TestReadNative_DegradeToScan_Found(t *testing.T) {
 	target, _ := json.Marshal(claudeMemRecord{
-		ID:        "obs-42",
-		ProjectID: "proj",
+		ID:        42,
+		Project:   "proj",
 		Title:     "Found via scan",
-		UpdatedAt: "2026-05-16T10:00:00Z",
+		Narrative: "n",
 		CreatedAt: "2026-05-16T09:00:00Z",
 	})
 
 	items := []json.RawMessage{
-		makeRawItem("obs-1", "proj", "2026-05-16T10:00:00Z"),
+		makeRawItem(1, "proj", "2026-05-16T10:00:00Z"),
 		target,
-		makeRawItem("obs-99", "proj", "2026-05-16T10:00:00Z"),
+		makeRawItem(99, "proj", "2026-05-16T10:00:00Z"),
 	}
 
 	ft := &fakeTransport{
@@ -1279,7 +1358,7 @@ func TestReadNative_DegradeToScan_Found(t *testing.T) {
 	}
 	a := New(ft)
 
-	rec, err := a.ReadNative(context.Background(), "obs-42")
+	rec, err := a.ReadNative(context.Background(), "42")
 	if err != nil {
 		t.Fatalf("unexpected error during degrade scan: %v", err)
 	}
@@ -1287,8 +1366,8 @@ func TestReadNative_DegradeToScan_Found(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected claudeMemRecord, got %T", rec)
 	}
-	if got.ID != "obs-42" {
-		t.Errorf("ID: got %q, want %q", got.ID, "obs-42")
+	if got.ID != 42 {
+		t.Errorf("ID: got %d, want %d", got.ID, 42)
 	}
 }
 
@@ -1296,8 +1375,8 @@ func TestReadNative_DegradeToScan_Found(t *testing.T) {
 // exhausted (id not present anywhere) → adapter.ErrNotFound.
 func TestReadNative_DegradeToScan_Exhausted_ErrNotFound(t *testing.T) {
 	items := []json.RawMessage{
-		makeRawItem("obs-1", "proj", "2026-05-16T10:00:00Z"),
-		makeRawItem("obs-2", "proj", "2026-05-16T10:00:00Z"),
+		makeRawItem(1, "proj", "2026-05-16T10:00:00Z"),
+		makeRawItem(2, "proj", "2026-05-16T10:00:00Z"),
 	}
 
 	ft := &fakeTransport{
@@ -1306,7 +1385,7 @@ func TestReadNative_DegradeToScan_Exhausted_ErrNotFound(t *testing.T) {
 	}
 	a := New(ft)
 
-	_, err := a.ReadNative(context.Background(), "obs-ghost")
+	_, err := a.ReadNative(context.Background(), "9999")
 	if !isNotFound(err) {
 		t.Fatalf("expected ErrNotFound after exhausted scan, got %v", err)
 	}
