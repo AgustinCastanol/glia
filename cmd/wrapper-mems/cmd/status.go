@@ -202,8 +202,9 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSO
 //
 //   0  all providers healthy
 //   1  at least one provider degraded
-//   2  unresolved conflicts present (checked after health so the caller always
-//      has a valid JSON object regardless of exit code)
+//
+// Conflicts are surfaced in the JSON body (conflicts array) and do not affect
+// the exit code. The TUI reads conflicts directly from the JSON body.
 func runStatusJSON(cmd *cobra.Command, s *store.Store, report *enginesync.StatusReport) {
 	out, err := buildStatusJSON(s, report)
 	if err != nil {
@@ -218,10 +219,8 @@ func runStatusJSON(cmd *cobra.Command, s *store.Store, report *enginesync.Status
 		os.Exit(1)
 	}
 
-	// Mirror exit codes of the human-readable path.
-	if len(report.Conflicts) > 0 {
-		os.Exit(2)
-	}
+	// Mirror exit codes of the human-readable path: exit 1 if any provider is
+	// degraded, exit 0 otherwise.
 	for _, v := range out.ProviderHealth {
 		if v != "" {
 			os.Exit(1)

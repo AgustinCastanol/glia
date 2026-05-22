@@ -44,10 +44,10 @@ type StatusReport struct {
 
 // ConflictSummary is a flattened view of a store.ConflictEntry for display.
 type ConflictSummary struct {
-	CanonicalID string
-	Revision    int
-	DupCount    int
-	DetectedAt  string
+	CanonicalID string `json:"canonical_id"`
+	Revision    int    `json:"revision"`
+	DupCount    int    `json:"dup_count"`
+	DetectedAt  string `json:"detected_at"`
 }
 
 // conflictSummary is the unexported alias kept for internal use in engine.go.
