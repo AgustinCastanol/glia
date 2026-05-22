@@ -141,7 +141,7 @@ func TestRecordsEqualIgnoringMetadata(t *testing.T) {
 		},
 		// --- nil/empty tags edge cases ---
 		{
-			name: "Both tags nil → equal",
+			name: "a has tags, b is nil → not equal",
 			mutB: func(b *store.CanonicalRecord) {
 				b.Tags = nil
 			},
