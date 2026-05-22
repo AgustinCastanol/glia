@@ -3,6 +3,9 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -220,5 +223,162 @@ func TestEngineStatus_ConflictsSurfaced(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("canonical_id %q not found in StatusReport.Conflicts", canonicalID)
+	}
+}
+
+// --- --json flag tests (T-04) ---
+
+// openStoreForTest opens the store at dir/.wrapper-mems and returns it.
+// The caller must defer s.Close().
+func openStoreForTest(t *testing.T, dir string) *store.Store {
+	t.Helper()
+	sp := filepath.Join(dir, ".wrapper-mems")
+	s, err := store.Open(sp)
+	if err != nil {
+		t.Fatalf("openStoreForTest: %v", err)
+	}
+	return s
+}
+
+// TestStatusJSON_KeysPresent verifies that buildStatusJSON emits all required
+// top-level keys for a healthy store (T-04).
+func TestStatusJSON_KeysPresent(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{"engram": nil},
+		Conflicts:      nil,
+	}
+
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	// Encode and decode to verify JSON marshaling.
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	for _, key := range []string{"provider_health", "conflicts", "sync_state", "line_count", "file_size_bytes", "schema_version"} {
+		if _, ok := m[key]; !ok {
+			t.Errorf("missing key %q in JSON output", key)
+		}
+	}
+}
+
+// TestStatusJSON_HealthyProviderEmptyString verifies that a healthy provider
+// maps to an empty string in provider_health (T-04).
+func TestStatusJSON_HealthyProviderEmptyString(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hi", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{"engram": nil},
+	}
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	if v, ok := out.ProviderHealth["engram"]; !ok || v != "" {
+		t.Errorf("healthy provider: want empty string, got %q", v)
+	}
+}
+
+// TestStatusJSON_DegradedProviderHasErrorString verifies that a degraded
+// provider maps to its error message in provider_health (T-04).
+func TestStatusJSON_DegradedProviderHasErrorString(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hi", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{
+			"engram": errors.New("connection refused"),
+		},
+	}
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	if v := out.ProviderHealth["engram"]; v != "connection refused" {
+		t.Errorf("degraded provider: want error string, got %q", v)
+	}
+}
+
+// TestStatusJSON_ConflictsNeverNil verifies that the conflicts field is always
+// a JSON array (never null) even when there are no conflicts (T-04).
+func TestStatusJSON_ConflictsNeverNil(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hi", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{},
+		Conflicts:      nil,
+	}
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+	if out.Conflicts == nil {
+		t.Error("conflicts: want non-nil slice (JSON array), got nil")
+	}
+}
+
+// TestStatusJSON_StoreStatsPopulated verifies that line_count and
+// file_size_bytes are non-zero for a non-empty store (T-04).
+func TestStatusJSON_StoreStatsPopulated(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "a", Type: "note"},
+		{Kind: "observation", Title: "b", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{},
+	}
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	if out.LineCount == 0 {
+		t.Error("line_count: want > 0")
+	}
+	if out.FileSizeBytes == 0 {
+		t.Error("file_size_bytes: want > 0")
+	}
+	if out.SchemaVersion == 0 {
+		t.Error("schema_version: want > 0")
 	}
 }

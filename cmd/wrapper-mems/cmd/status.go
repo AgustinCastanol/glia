@@ -2,17 +2,39 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/agustincastanol/wrapper-mems/internal/store"
 	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
 )
 
 var statusFlags struct {
 	conflicts bool
+	json      bool
+}
+
+// statusJSON is the machine-readable form emitted by --json.
+// It embeds all StatusReport fields plus store.Stats() fields so the TUI
+// (and other consumers) can parse a single object without open/locked the store.
+type statusJSON struct {
+	// ProviderHealth maps provider name to health error string (empty string = healthy).
+	ProviderHealth map[string]string `json:"provider_health"`
+
+	// Conflicts is the current unresolved conflict list.
+	Conflicts []enginesync.ConflictSummary `json:"conflicts"`
+
+	// SyncState maps provider name to its last push/pull watermarks.
+	SyncState map[string]store.ProviderSyncState `json:"sync_state"`
+
+	// LineCount, FileSizeBytes, and SchemaVersion come from store.Stats().
+	LineCount     int   `json:"line_count"`
+	FileSizeBytes int64 `json:"file_size_bytes"`
+	SchemaVersion int   `json:"schema_version"`
 }
 
 var statusCmd = &cobra.Command{
@@ -30,6 +52,8 @@ reachable. Exit codes (REQ-SE-52):
 func init() {
 	statusCmd.Flags().BoolVar(&statusFlags.conflicts, "conflicts", false,
 		"also print the current conflict table")
+	statusCmd.Flags().BoolVar(&statusFlags.json, "json", false,
+		"emit machine-readable JSON (provider_health, conflicts, sync_state, store stats)")
 	rootCmd.AddCommand(statusCmd)
 }
 
@@ -62,6 +86,11 @@ func runStatus(cmd *cobra.Command, _ []string) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "status:", err)
 		os.Exit(1)
+	}
+
+	if statusFlags.json {
+		runStatusJSON(cmd, s, report)
+		return
 	}
 
 	w := cmd.OutOrStdout()
@@ -126,6 +155,76 @@ func sortStringSlice(ss []string) {
 	for i := 1; i < len(ss); i++ {
 		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
 			ss[j], ss[j-1] = ss[j-1], ss[j]
+		}
+	}
+}
+
+// buildStatusJSON constructs the statusJSON payload from a StatusReport and an
+// open store. Separated from runStatusJSON so tests can call it without os.Exit.
+func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSON, error) {
+	health := make(map[string]string, len(report.ProviderHealth))
+	for name, herr := range report.ProviderHealth {
+		if herr != nil {
+			health[name] = herr.Error()
+		} else {
+			health[name] = ""
+		}
+	}
+
+	syncState := make(map[string]store.ProviderSyncState)
+	for name := range report.ProviderHealth {
+		ps, _ := s.SyncState(name)
+		syncState[name] = ps
+	}
+
+	st, err := store.Stats(s.RootDir())
+	if err != nil {
+		return statusJSON{}, fmt.Errorf("store.Stats: %w", err)
+	}
+
+	conflicts := report.Conflicts
+	if conflicts == nil {
+		conflicts = []enginesync.ConflictSummary{}
+	}
+
+	return statusJSON{
+		ProviderHealth: health,
+		Conflicts:      conflicts,
+		SyncState:      syncState,
+		LineCount:      st.LineCount,
+		FileSizeBytes:  st.FileSizeBytes,
+		SchemaVersion:  st.SchemaVersion,
+	}, nil
+}
+
+// runStatusJSON emits the machine-readable JSON status object and exits with
+// the same exit codes as the human-readable path (D9, REQ-TUI-08).
+//
+//   0  all providers healthy
+//   1  at least one provider degraded
+//   2  unresolved conflicts present (checked after health so the caller always
+//      has a valid JSON object regardless of exit code)
+func runStatusJSON(cmd *cobra.Command, s *store.Store, report *enginesync.StatusReport) {
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "status --json:", err)
+		os.Exit(1)
+	}
+
+	enc := json.NewEncoder(cmd.OutOrStdout())
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		fmt.Fprintln(os.Stderr, "status --json: encode:", err)
+		os.Exit(1)
+	}
+
+	// Mirror exit codes of the human-readable path.
+	if len(report.Conflicts) > 0 {
+		os.Exit(2)
+	}
+	for _, v := range out.ProviderHealth {
+		if v != "" {
+			os.Exit(1)
 		}
 	}
 }
