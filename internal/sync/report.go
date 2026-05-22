@@ -39,16 +39,20 @@ type StatusReport struct {
 	ProviderHealth map[string]error
 
 	// Conflicts is the current conflict list from the store.
-	Conflicts []conflictSummary
+	Conflicts []ConflictSummary
 }
 
-// conflictSummary is a flattened view of a store.ConflictEntry for display.
-type conflictSummary struct {
+// ConflictSummary is a flattened view of a store.ConflictEntry for display.
+type ConflictSummary struct {
 	CanonicalID string
 	Revision    int
 	DupCount    int
 	DetectedAt  string
 }
+
+// conflictSummary is the unexported alias kept for internal use in engine.go.
+// All external code uses ConflictSummary.
+type conflictSummary = ConflictSummary
 
 // WriteSummary prints a human-readable run summary to w.
 // Format matches REQ-SE-32.
