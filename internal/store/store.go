@@ -283,6 +283,27 @@ func (s *Store) readLineAt(offset int64) (CanonicalRecord, error) {
 	return r, nil
 }
 
+// ListLive returns the latest non-deleted revision of every canonical_id in
+// the index, in unspecified order. Deleted records are omitted. This is the
+// primary read path for show and pull (PR-D).
+func (s *Store) ListLive() ([]CanonicalRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var results []CanonicalRecord
+	for _, entry := range s.idx.Entries {
+		if entry.Deleted {
+			continue
+		}
+		r, err := s.readLineAt(entry.LatestLineOffset)
+		if err != nil {
+			return nil, fmt.Errorf("ListLive: read offset %d: %w", entry.LatestLineOffset, err)
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
 // ReadLineAtOffset reads and decodes the JSONL line at byteOffset in memory.jsonl.
 // It is used by the sync engine's Resolve operation to retrieve a chosen
 // conflict duplicate by its stored line offset.
