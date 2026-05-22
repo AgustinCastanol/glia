@@ -438,6 +438,13 @@ func (a *EngramAdapter) FromCanonical(canonical store.CanonicalRecord) (adapter.
 	return rec, nil
 }
 
+// SupportedKinds returns nil, meaning the engram adapter handles all canonical
+// kinds (observation, session_summary). Relation records are rejected inside
+// FromCanonical with ErrUnsupported.
+func (a *EngramAdapter) SupportedKinds() []string {
+	return nil
+}
+
 // WriteNative writes an EngramRecord to the engram provider (REQ-ENG-24, REQ-ENG-25, REQ-ENG-26).
 // Idempotent: if a record with the same provider_id already exists, it updates in place.
 func (a *EngramAdapter) WriteNative(ctx context.Context, record adapter.NativeRecord) (adapter.NativeID, error) {

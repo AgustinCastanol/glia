@@ -104,3 +104,26 @@ func (s *Store) SyncState(provider string) (ProviderSyncState, bool) {
 	st, ok := s.idx.SyncState[provider]
 	return st, ok
 }
+
+// BindProvider records a native-ID ↔ canonical-ID mapping for the given provider
+// and atomically persists index.json. Used by the pull loop after a successful
+// WriteNative to keep the ID map consistent.
+func (s *Store) BindProvider(provider, nativeID, canonicalID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return fmt.Errorf("store: closed")
+	}
+
+	if s.idx.ByProvider == nil {
+		s.idx.ByProvider = make(map[string]map[string]string)
+	}
+	if s.idx.ByProvider[provider] == nil {
+		s.idx.ByProvider[provider] = make(map[string]string)
+	}
+	s.idx.ByProvider[provider][nativeID] = canonicalID
+
+	idxPath := filepath.Join(s.rootDir, indexFilename)
+	return s.idx.persist(idxPath)
+}
