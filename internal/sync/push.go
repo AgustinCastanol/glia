@@ -82,13 +82,6 @@ func (e *Engine) pushProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 			continue
 		}
 
-		// Track max updated_at across all processed records (REQ-SE-19).
-		if t, err2 := time.Parse(time.RFC3339, canon.UpdatedAt); err2 == nil {
-			if t.After(maxUpdatedAt) {
-				maxUpdatedAt = t
-			}
-		}
-
 		// Equality check (D5 / REQ-SE-22d).
 		canonicalID, known := idmap.CanonicalFromNative(adapter.NativeID(nativeID))
 		if known {
@@ -126,9 +119,18 @@ func (e *Engine) pushProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 			}
 			result.Pushed += len(committed)
 
-			// Bind native↔canonical IDs so subsequent push runs can perform
-			// equality checks via CanonicalFromNative (re-uses BindProvider used by pull).
+			// Advance the watermark only over records that were durably
+			// written (REQ-SE-19). If AppendBatch commits a subset, any
+			// uncommitted record stays below the watermark and is retried.
 			for _, r := range committed {
+				if t, err2 := time.Parse(time.RFC3339, r.UpdatedAt); err2 == nil {
+					if t.After(maxUpdatedAt) {
+						maxUpdatedAt = t
+					}
+				}
+
+				// Bind native↔canonical IDs so subsequent push runs can perform
+				// equality checks via CanonicalFromNative (re-uses BindProvider used by pull).
 				if r.Origin.ProviderID != "" {
 					if bErr := e.store.BindProvider(a.Name(), r.Origin.ProviderID, r.CanonicalID); bErr != nil {
 						fmt.Fprintf(e.w, "WARN push %s: bind %s→%s: %v\n",

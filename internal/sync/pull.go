@@ -98,19 +98,21 @@ func (e *Engine) pullProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 
 		nativeID, writeErr := a.WriteNative(ctx, native)
 		if writeErr != nil {
-			if errors.Is(writeErr, adapter.ErrUnsupported) {
-				// REQ-SE-28 / REQ-SE-29f: ErrUnsupported → skip silently.
-				continue
-			}
-
-			// Check for engram update-gap (D9 / REQ-SE-30): provider returns
-			// ErrUnsupported or a "record exists" style error for update paths.
-			// We surface this as a structured SKIP warning.
+			// D9 / REQ-SE-30: the engram CLI has no update command, so
+			// WriteNative returns ErrUnsupported for an already-existing
+			// record. Surface that as a structured SKIP before the generic
+			// ErrUnsupported guard, otherwise the warning never fires.
 			if isEngramUpdateGap(a.Name(), writeErr) {
 				fmt.Fprintf(e.w, "SKIP %s update id=%s reason=engram-cli-no-update\n",
 					a.Name(), rec.CanonicalID)
 				result.UpdatesSkipped++
 				// Do NOT advance watermark past this record.
+				continue
+			}
+
+			if errors.Is(writeErr, adapter.ErrUnsupported) {
+				// REQ-SE-28 / REQ-SE-29f: read-only adapter or unsupported
+				// kind (e.g. claude-mem) → skip silently.
 				continue
 			}
 
