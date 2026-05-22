@@ -283,6 +283,15 @@ func (s *Store) readLineAt(offset int64) (CanonicalRecord, error) {
 	return r, nil
 }
 
+// ReadLineAtOffset reads and decodes the JSONL line at byteOffset in memory.jsonl.
+// It is used by the sync engine's Resolve operation to retrieve a chosen
+// conflict duplicate by its stored line offset.
+func (s *Store) ReadLineAtOffset(offset int64) (CanonicalRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readLineAt(offset)
+}
+
 // Rebuild discards the in-memory index and reconstructs it from a full
 // streaming scan of memory.jsonl. Idempotent.
 func (s *Store) Rebuild() error {
