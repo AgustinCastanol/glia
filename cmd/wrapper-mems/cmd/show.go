@@ -21,9 +21,8 @@ var showCmd = &cobra.Command{
 	Long: `show renders all live (non-deleted) canonical records. By default it prints a
 human-readable table. Use --json to get JSONL output for piping (REQ-SE-12..14).
 
-Filters --kind and --type are OR-ed independently (i.e. all records matching
-either the kind or the type are shown when both flags are given — within a single
-flag value the filter is exact-match).`,
+Filters --kind and --type are AND-ed: when both flags are given only records
+matching the kind AND the type are shown. Each flag value is exact-match.`,
 	Args: cobra.NoArgs,
 	Run:  runShow,
 }

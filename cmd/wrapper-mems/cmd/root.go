@@ -44,10 +44,16 @@ func init() {
 		"enable detailed progress output")
 }
 
-// Execute runs the root command and returns any error. main() maps non-nil
-// errors to exit code 1; commands that need exit code 2 call os.Exit directly.
+// Execute runs the root command and returns any error. main() maps the
+// returned error to an exit code via ExitCode.
 func Execute() error {
 	return rootCmd.Execute()
+}
+
+// ExitCode maps a run error returned by Execute to a CLI exit code
+// per D6 / REQ-SE-51..53. It is the exported entry point for main().
+func ExitCode(err error) int {
+	return exitCode(err)
 }
 
 // projectDir resolves the effective project root: --dir flag, then cwd.
