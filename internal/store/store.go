@@ -546,25 +546,24 @@ func (s *Store) AppendBatch(rs []CanonicalRecord) ([]CanonicalRecord, error) {
 	return completed, nil
 }
 
-// providerIDMap is a snapshot view of ByProvider[provider] at a point in time.
-// It uses plain string keys and does NOT directly satisfy adapter.IDMap, whose
-// methods use the named types adapter.NativeID/adapter.CanonicalID (named string
-// types are not interface-assignable to string). The engram adapter wraps this
-// snapshot in a thin boundary adapter that casts string<->named types, keeping
-// internal/store free of any internal/adapter import (CON-01).
-type providerIDMap struct {
+// ProviderIDMapSnapshot is a point-in-time copy of the native↔canonical ID
+// mapping for a single provider. It uses plain string keys — callers that need
+// to satisfy adapter.IDMap (which uses named types) must wrap it in a thin
+// adapter (see internal/sync.providerIDMapAdapter). This keeps internal/store
+// free of any internal/adapter import (CON-01).
+type ProviderIDMapSnapshot struct {
 	forward map[string]string // nativeID -> canonicalID
 	reverse map[string]string // canonicalID -> nativeID (built lazily on first use)
 }
 
 // CanonicalFromNative returns the canonical ID for the given native provider ID.
-func (m *providerIDMap) CanonicalFromNative(nativeID string) (string, bool) {
+func (m *ProviderIDMapSnapshot) CanonicalFromNative(nativeID string) (string, bool) {
 	v, ok := m.forward[nativeID]
 	return v, ok
 }
 
 // NativeFromCanonical returns the native provider ID for the given canonical ID.
-func (m *providerIDMap) NativeFromCanonical(canonicalID string) (string, bool) {
+func (m *ProviderIDMapSnapshot) NativeFromCanonical(canonicalID string) (string, bool) {
 	if m.reverse == nil {
 		m.reverse = make(map[string]string, len(m.forward))
 		for k, v := range m.forward {
@@ -576,9 +575,9 @@ func (m *providerIDMap) NativeFromCanonical(canonicalID string) (string, bool) {
 }
 
 // ProviderIDMap returns a read-only snapshot view of the ID mapping for provider.
-// If provider is unknown, a non-nil IDMap is returned that returns false for all lookups.
+// If provider is unknown, a non-nil snapshot is returned that returns false for all lookups.
 // Safe for concurrent use; acquires a read lock for the snapshot only.
-func (s *Store) ProviderIDMap(provider string) *providerIDMap {
+func (s *Store) ProviderIDMap(provider string) *ProviderIDMapSnapshot {
 	s.mu.RLock()
 	inner := s.idx.ByProvider[provider] // nil if provider unknown
 	s.mu.RUnlock()
@@ -588,7 +587,15 @@ func (s *Store) ProviderIDMap(provider string) *providerIDMap {
 	for k, v := range inner {
 		snapshot[k] = v
 	}
-	return &providerIDMap{forward: snapshot}
+	return &ProviderIDMapSnapshot{forward: snapshot}
+}
+
+// RootDir returns the absolute path of the store directory (e.g. .wrapper-mems/).
+// Used by the Engine's git-commit helper to locate the working tree root.
+func (s *Store) RootDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.rootDir
 }
 
 // isClosed reports whether the store has been closed. Useful for tests.

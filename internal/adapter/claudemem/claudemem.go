@@ -497,3 +497,10 @@ func (a *ClaudeMemAdapter) FromCanonical(canonical store.CanonicalRecord) (adapt
 func (a *ClaudeMemAdapter) WriteNative(ctx context.Context, record adapter.NativeRecord) (adapter.NativeID, error) {
 	return "", fmt.Errorf("%w", adapter.ErrUnsupported)
 }
+
+// SupportedKinds returns nil, meaning all canonical kinds are attempted.
+// In practice only "session_summary" records round-trip through this adapter;
+// other kinds are rejected by FromCanonical with ErrUnsupported.
+func (a *ClaudeMemAdapter) SupportedKinds() []string {
+	return nil
+}

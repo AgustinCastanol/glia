@@ -87,4 +87,9 @@ type Adapter interface {
 	// Idempotent: if a record with the same origin.provider_id already exists,
 	// it MUST be updated in place rather than duplicated.
 	WriteNative(ctx context.Context, record NativeRecord) (NativeID, error)
+
+	// SupportedKinds returns the set of canonical record kinds this adapter can
+	// handle via FromCanonical/WriteNative. An empty slice means "all kinds".
+	// Pull uses this to skip unsupported record types before calling FromCanonical.
+	SupportedKinds() []string
 }

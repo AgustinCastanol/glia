@@ -1,9 +1,12 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"os/exec"
+	"time"
 
 	"github.com/agustincastanol/wrapper-mems/internal/adapter"
 	"github.com/agustincastanol/wrapper-mems/internal/store"
@@ -32,6 +35,10 @@ type Options struct {
 	// Commit, when true, runs `git add .wrapper-mems/ && git commit` after a
 	// successful non-dry-run sync (REQ-SE-11).
 	Commit bool
+
+	// Project is the project name forwarded to adapter.ListNative.
+	// Empty string is valid; adapters handle it as "all projects".
+	Project string
 }
 
 // Engine orchestrates push, pull, and full-sync operations across all
@@ -95,39 +102,101 @@ func (e *Engine) activeProviders() []adapter.Adapter {
 }
 
 // Push iterates active providers, checks Health, and pushes native records
-// into the canonical store. The push logic is implemented in push.go (PR-D);
-// this stub returns an empty report so PR-B compiles without push.go.
-//
-// Stub — replaced in PR-D.
+// into the canonical store (§6.1 / REQ-SE-21..27).
 func (e *Engine) Push(ctx context.Context) (*RunReport, error) {
-	return &RunReport{PerProvider: make(map[string]ProviderResult)}, nil
+	report := &RunReport{PerProvider: make(map[string]ProviderResult)}
+	providers := e.activeProviders()
+
+	allFailed := len(providers) > 0
+	for _, a := range providers {
+		if err := a.Health(ctx); err != nil {
+			fmt.Fprintf(e.w, "provider %s unavailable, skipping: %v\n", a.Name(), err)
+			report.HardErrors = append(report.HardErrors,
+				fmt.Errorf("provider %s: %w", a.Name(), err))
+			continue
+		}
+		allFailed = false
+
+		result, err := e.pushProvider(ctx, a)
+		if err != nil {
+			fmt.Fprintf(e.w, "WARN push %s: %v\n", a.Name(), err)
+			report.HardErrors = append(report.HardErrors,
+				fmt.Errorf("push %s: %w", a.Name(), err))
+			continue
+		}
+		report.PerProvider[a.Name()] = result
+		report.UpdatesSkipped += result.UpdatesSkipped
+	}
+
+	// If ALL providers failed Health, surface as a hard-error report.
+	if allFailed && len(providers) > 0 {
+		return report, nil
+	}
+
+	// Reflect current conflict count (REQ-SE-51).
+	report.Conflicts = len(e.store.Conflicts())
+	return report, nil
 }
 
 // Pull iterates active providers and writes canonical records out to each
-// provider via WriteNative. The pull logic is implemented in pull.go (PR-D);
-// this stub returns an empty report so PR-B compiles without pull.go.
-//
-// Stub — replaced in PR-D.
+// provider via WriteNative (§6.2 / REQ-SE-28..30).
 func (e *Engine) Pull(ctx context.Context) (*RunReport, error) {
-	return &RunReport{PerProvider: make(map[string]ProviderResult)}, nil
+	report := &RunReport{PerProvider: make(map[string]ProviderResult)}
+	providers := e.activeProviders()
+
+	allFailed := len(providers) > 0
+	for _, a := range providers {
+		if err := a.Health(ctx); err != nil {
+			fmt.Fprintf(e.w, "provider %s unavailable, skipping: %v\n", a.Name(), err)
+			report.HardErrors = append(report.HardErrors,
+				fmt.Errorf("provider %s: %w", a.Name(), err))
+			continue
+		}
+		allFailed = false
+
+		result, err := e.pullProvider(ctx, a)
+		if err != nil {
+			fmt.Fprintf(e.w, "WARN pull %s: %v\n", a.Name(), err)
+			report.HardErrors = append(report.HardErrors,
+				fmt.Errorf("pull %s: %w", a.Name(), err))
+			continue
+		}
+		report.PerProvider[a.Name()] = result
+		report.UpdatesSkipped += result.UpdatesSkipped
+	}
+
+	if allFailed && len(providers) > 0 {
+		return report, nil
+	}
+
+	report.Conflicts = len(e.store.Conflicts())
+	return report, nil
 }
 
-// Sync runs Pull then Push (REQ-SE-07, REQ-SE-31). Mirror-engram shell-outs
-// wrap the run when enabled (D11). Full implementation is in PR-D; this stub
-// delegates to the stubbed Push/Pull so the package compiles.
-//
-// Stub — replaced in PR-D.
+// Sync runs Pull then Push, with optional mirror-engram shell-outs (§6.3 /
+// REQ-SE-07, REQ-SE-31, REQ-SE-40). After a non-dry-run success, if
+// opts.Commit is set, stages and commits the .wrapper-mems/ directory
+// (REQ-SE-11).
 func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
+	if e.mirrorEngramEnabled() {
+		e.mirrorEngram(e.opts.Project)
+	}
+
 	pullReport, err := e.Pull(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("sync pull: %w", err)
 	}
+
 	pushReport, err := e.Push(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("sync push: %w", err)
 	}
 
-	// Merge reports.
+	if e.mirrorEngramEnabled() {
+		e.mirrorEngram(e.opts.Project)
+	}
+
+	// Merge reports (REQ-SE-32).
 	merged := &RunReport{
 		PerProvider:    make(map[string]ProviderResult),
 		UpdatesSkipped: pullReport.UpdatesSkipped + pushReport.UpdatesSkipped,
@@ -145,7 +214,42 @@ func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
 		merged.PerProvider[p] = existing
 	}
 	merged.HardErrors = append(pullReport.HardErrors, pushReport.HardErrors...)
+	merged.Conflicts = len(e.store.Conflicts())
+
+	// --commit flag (REQ-SE-11).
+	if e.opts.Commit && !e.opts.DryRun {
+		e.gitCommit()
+	}
+
 	return merged, nil
+}
+
+// gitCommit runs `git add .wrapper-mems/ && git commit -m "chore: sync [timestamp]"`
+// in the store's parent directory. Failures are warnings, never hard errors (REQ-SE-11).
+func (e *Engine) gitCommit() {
+	storeParent := e.store.RootDir()
+	if storeParent == "" {
+		fmt.Fprintf(e.w, "WARN --commit: cannot determine store root\n")
+		return
+	}
+
+	ts := time.Now().UTC().Format(time.RFC3339)
+	msg := fmt.Sprintf("chore: sync [%s]", ts)
+
+	addCmd := exec.Command("git", "-C", storeParent, "add", ".wrapper-mems/")
+	var addErr bytes.Buffer
+	addCmd.Stderr = &addErr
+	if err := addCmd.Run(); err != nil {
+		fmt.Fprintf(e.w, "WARN --commit: git add: %v\n", err)
+		return
+	}
+
+	commitCmd := exec.Command("git", "-C", storeParent, "commit", "-m", msg)
+	var commitErr bytes.Buffer
+	commitCmd.Stderr = &commitErr
+	if err := commitCmd.Run(); err != nil {
+		fmt.Fprintf(e.w, "WARN --commit: git commit: %s\n", commitErr.String())
+	}
 }
 
 // Status checks Health on each active provider and returns current conflict
