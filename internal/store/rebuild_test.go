@@ -212,6 +212,110 @@ func TestByProvider_SurvivesStaleIndexRebuild(t *testing.T) {
 	})
 }
 
+// --- Conflict detection tests (T-13) ---
+
+func TestRebuildFromFile_ConflictDiffUpdatedAt_NewerWins(t *testing.T) {
+	// Scenario: two lines, same (cid, revision=3), different updated_at —
+	// the line with greater updated_at must win.
+	fixture := "testdata/conflict_diff_updated_at.jsonl"
+	idx, err := rebuildFromFile(fixture)
+	require.NoError(t, err)
+
+	entry := idx.Entries["01HZZZZZZZZZZZZZZZZZZZAAAA"]
+	// B002 has updated_at=2024-01-02 > B001's 2024-01-01 — B002 wins.
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZB002", entry.LineULID, "newer updated_at must win")
+	assert.Equal(t, 3, entry.LatestRevision)
+
+	// Conflict must be recorded.
+	require.Len(t, idx.Conflicts, 1)
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZAAAA", idx.Conflicts[0].CanonicalID)
+	assert.Equal(t, 3, idx.Conflicts[0].Revision)
+	require.Len(t, idx.Conflicts[0].Duplicates, 2)
+	// Winner is first in Duplicates (tiebreak order).
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZB002", idx.Conflicts[0].Duplicates[0].LineULID, "winner is first dup")
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZB001", idx.Conflicts[0].Duplicates[1].LineULID, "loser is second dup")
+}
+
+func TestRebuildFromFile_ConflictSameRevision_ConflictRecorded(t *testing.T) {
+	// Existing fixture: same (cid, revision=1), same updated_at, higher lineULID wins.
+	fixture := "testdata/conflict_same_revision.jsonl"
+	idx, err := rebuildFromFile(fixture)
+	require.NoError(t, err)
+
+	// A conflict entry must exist.
+	require.Len(t, idx.Conflicts, 1)
+	c := idx.Conflicts[0]
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZAAAA", c.CanonicalID)
+	assert.Equal(t, 1, c.Revision)
+	assert.NotEmpty(t, c.DetectedAt)
+	require.Len(t, c.Duplicates, 2)
+
+	// B002 > B001 lexicographically — B002 is winner (first dup).
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZB002", c.Duplicates[0].LineULID, "winner first in Duplicates")
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZB001", c.Duplicates[1].LineULID, "loser second in Duplicates")
+}
+
+func TestRebuildFromFile_ConflictWithCleanRecords_CleanUnaffected(t *testing.T) {
+	// Fixture has 3 canonical_ids: A (clean rev=1), B (conflict rev=2 x2), C (clean rev=1).
+	fixture := "testdata/conflict_with_clean_records.jsonl"
+	idx, err := rebuildFromFile(fixture)
+	require.NoError(t, err)
+
+	// Three canonical_ids must be present.
+	require.Len(t, idx.Entries, 3)
+
+	// Only the conflicting canonical_id B must appear in Conflicts.
+	require.Len(t, idx.Conflicts, 1)
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZBBBB", idx.Conflicts[0].CanonicalID)
+
+	// Clean records must be correct.
+	entryA := idx.Entries["01HZZZZZZZZZZZZZZZZZZZAAAA"]
+	assert.Equal(t, 1, entryA.LatestRevision)
+	assert.False(t, entryA.Deleted)
+
+	entryC := idx.Entries["01HZZZZZZZZZZZZZZZZZZZCCCC"]
+	assert.Equal(t, 1, entryC.LatestRevision)
+	assert.False(t, entryC.Deleted)
+}
+
+func TestRebuildFromFile_NoConflicts_ConflictsSliceEmpty(t *testing.T) {
+	// A fixture without collisions must produce an empty (non-nil) Conflicts slice.
+	fixture := "testdata/revision_chain.jsonl"
+	idx, err := rebuildFromFile(fixture)
+	require.NoError(t, err)
+	assert.NotNil(t, idx.Conflicts)
+	assert.Len(t, idx.Conflicts, 0)
+}
+
+func TestRebuildFromFile_ConflictDuplicatesHaveProvider(t *testing.T) {
+	// Verify provider field is populated in ConflictDuplicate.
+	fixture := "testdata/conflict_diff_updated_at.jsonl"
+	idx, err := rebuildFromFile(fixture)
+	require.NoError(t, err)
+
+	require.Len(t, idx.Conflicts, 1)
+	dups := idx.Conflicts[0].Duplicates
+	providers := map[string]bool{dups[0].Provider: true, dups[1].Provider: true}
+	assert.True(t, providers["engram"] || providers["claude-mem"], "provider field must be populated")
+}
+
+func TestRebuildFromFile_ConflictPersistedViaAppendConflict(t *testing.T) {
+	// Full round-trip: open store on a conflicting file, rebuild, verify Conflicts()
+	// returns the detected conflicts and they survive a reopen.
+	dir := t.TempDir()
+	data, err := os.ReadFile("testdata/conflict_same_revision.jsonl")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dir+"/memory.jsonl", data, 0644))
+
+	s, err := Open(dir)
+	require.NoError(t, err)
+	defer s.Close()
+
+	conflicts := s.Conflicts()
+	require.Len(t, conflicts, 1, "conflict detected at Open must be in Conflicts()")
+	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZAAAA", conflicts[0].CanonicalID)
+}
+
 func TestLoadOrRebuild_StaleFingerprint_Rebuilds(t *testing.T) {
 	dir := t.TempDir()
 	data, err := os.ReadFile(filepath.Join("testdata", "single_record.jsonl"))

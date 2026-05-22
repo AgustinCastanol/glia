@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// revisionKey is the composite key used to detect (canonical_id, revision) collisions.
+type revisionKey struct {
+	canonicalID string
+	revision    int
+}
+
 // lineCandidate holds the per-line data needed for tiebreak selection.
 type lineCandidate struct {
 	offset    int64
@@ -17,6 +23,7 @@ type lineCandidate struct {
 	updatedAt string
 	lineULID  string
 	deleted   bool
+	provider  string // origin.provider, used when building ConflictDuplicate
 }
 
 // tiebreakWinner selects the winning line from candidates using the rule:
@@ -92,6 +99,7 @@ func rebuildFromFile(path string) (*index, error) {
 			updatedAt: rr.UpdatedAt,
 			lineULID:  rr.LineULID,
 			deleted:   rr.Deleted,
+			provider:  rr.Origin.Provider,
 		})
 
 		// Track origin for ByProvider population; every line updates so the
@@ -114,8 +122,23 @@ func rebuildFromFile(path string) (*index, error) {
 		lineCount++
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("rebuild: scan %s: %w", path, err)
+		return nil, fmt.Errorf("rebuild: scan %s: %w", path, ErrCorrupt)
 	}
+
+	// Group candidates by (canonical_id, revision) to detect collisions.
+	// revisionGroups[cid][revision] = all lines sharing that (cid, revision) pair.
+	type revGroup = map[int][]lineCandidate
+	revisionGroups := make(map[string]revGroup, len(candidates))
+	for cid, lines := range candidates {
+		rg := make(revGroup)
+		for _, lc := range lines {
+			rg[lc.revision] = append(rg[lc.revision], lc)
+		}
+		revisionGroups[cid] = rg
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	var conflicts []ConflictEntry
 
 	entries := make(map[string]IndexEntry, len(candidates))
 	for cid, lines := range candidates {
@@ -127,6 +150,38 @@ func rebuildFromFile(path string) (*index, error) {
 			Deleted:          winner.deleted,
 			UpdatedAt:        winner.updatedAt,
 			LineULID:         winner.lineULID,
+		}
+
+		// Detect (canonical_id, revision) collisions and record conflicts.
+		for rev, group := range revisionGroups[cid] {
+			if len(group) < 2 {
+				continue
+			}
+			// Sort group by tiebreak order so index 0 is winner.
+			sorted := make([]lineCandidate, len(group))
+			copy(sorted, group)
+			sort.SliceStable(sorted, func(i, j int) bool {
+				a, b := sorted[i], sorted[j]
+				if a.updatedAt != b.updatedAt {
+					return a.updatedAt > b.updatedAt
+				}
+				return a.lineULID > b.lineULID
+			})
+			dups := make([]ConflictDuplicate, len(sorted))
+			for i, lc := range sorted {
+				dups[i] = ConflictDuplicate{
+					LineOffset: lc.offset,
+					LineULID:   lc.lineULID,
+					UpdatedAt:  lc.updatedAt,
+					Provider:   lc.provider,
+				}
+			}
+			conflicts = append(conflicts, ConflictEntry{
+				CanonicalID: cid,
+				Revision:    rev,
+				DetectedAt:  now,
+				Duplicates:  dups,
+			})
 		}
 	}
 
@@ -147,6 +202,10 @@ func rebuildFromFile(path string) (*index, error) {
 		return nil, fmt.Errorf("rebuild: fingerprint: %w", err)
 	}
 
+	if conflicts == nil {
+		conflicts = []ConflictEntry{}
+	}
+
 	return &index{
 		SchemaVersion:     StoreSupportedVersion,
 		SourceFingerprint: fp,
@@ -154,6 +213,7 @@ func rebuildFromFile(path string) (*index, error) {
 		BuiltAt:           time.Now().UTC().Format(time.RFC3339Nano),
 		Entries:           entries,
 		ByProvider:        byProvider,
+		Conflicts:         conflicts,
 	}, nil
 }
 

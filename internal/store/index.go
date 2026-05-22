@@ -11,6 +11,33 @@ import (
 	"github.com/cespare/xxhash/v2"
 )
 
+// ProviderSyncState tracks watermark and counters for a single provider.
+type ProviderSyncState struct {
+	LastPulledAt     string `json:"last_pulled_at"`
+	LastPushedAt     string `json:"last_pushed_at"`
+	LastNativeCursor string `json:"last_native_cursor,omitempty"`
+	RecordsPulled    int    `json:"records_pulled"`
+	RecordsPushed    int    `json:"records_pushed"`
+}
+
+// ConflictDuplicate is one entry in a ConflictEntry's Duplicates slice.
+// LineOffset and LineULID identify the physical JSONL line.
+type ConflictDuplicate struct {
+	LineOffset int64  `json:"line_offset"`
+	LineULID   string `json:"line_ulid"`
+	UpdatedAt  string `json:"updated_at"`
+	Provider   string `json:"provider"`
+}
+
+// ConflictEntry records a (canonical_id, revision) collision detected during rebuild.
+// Duplicates holds all competing lines (winner-first, ordered by tiebreak).
+type ConflictEntry struct {
+	CanonicalID string              `json:"canonical_id"`
+	Revision    int                 `json:"revision"`
+	DetectedAt  string              `json:"detected_at"`
+	Duplicates  []ConflictDuplicate `json:"duplicates"`
+}
+
 // IndexEntry is the per-canonical_id pointer to the winning line.
 type IndexEntry struct {
 	CanonicalID      string `json:"canonical_id"`
@@ -29,6 +56,8 @@ type index struct {
 	BuiltAt           string                           `json:"built_at"`
 	Entries           map[string]IndexEntry            `json:"entries"`
 	ByProvider        map[string]map[string]string     `json:"by_provider,omitempty"`
+	SyncState         map[string]ProviderSyncState     `json:"sync_state,omitempty"`
+	Conflicts         []ConflictEntry                  `json:"conflicts,omitempty"`
 }
 
 // loadIndex reads and deserializes index.json from path.
@@ -39,13 +68,19 @@ func loadIndex(path string) (*index, error) {
 	}
 	var idx index
 	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, fmt.Errorf("index: parse %s: %w", path, err)
+		return nil, fmt.Errorf("index: parse %s: %w", path, ErrCorrupt)
 	}
 	if idx.Entries == nil {
 		idx.Entries = make(map[string]IndexEntry)
 	}
 	if idx.ByProvider == nil {
 		idx.ByProvider = make(map[string]map[string]string)
+	}
+	if idx.SyncState == nil {
+		idx.SyncState = make(map[string]ProviderSyncState)
+	}
+	if idx.Conflicts == nil {
+		idx.Conflicts = []ConflictEntry{}
 	}
 	return &idx, nil
 }
