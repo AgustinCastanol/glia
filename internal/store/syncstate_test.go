@@ -49,6 +49,24 @@ func TestUpdateSyncState_IdempotentOverwrite(t *testing.T) {
 	assert.Equal(t, st2, got, "second write must overwrite first")
 }
 
+func TestUpdateSyncState_SurvivesRebuild(t *testing.T) {
+	s := openTempStore(t)
+
+	st := ProviderSyncState{
+		LastPulledAt:  "2026-01-01T00:00:00Z",
+		LastPushedAt:  "2026-01-02T00:00:00Z",
+		RecordsPulled: 5,
+		RecordsPushed: 3,
+	}
+	require.NoError(t, s.UpdateSyncState("engram", st))
+
+	require.NoError(t, s.Rebuild())
+
+	got, ok := s.SyncState("engram")
+	require.True(t, ok, "Rebuild must not discard provider watermarks")
+	assert.Equal(t, st, got)
+}
+
 func TestUpdateSyncState_MultipleProviders(t *testing.T) {
 	s := openTempStore(t)
 

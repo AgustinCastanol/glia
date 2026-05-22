@@ -158,6 +158,8 @@ func rebuildFromFile(path string) (*index, error) {
 				continue
 			}
 			// Sort group by tiebreak order so index 0 is winner.
+			// The revision term from tiebreakWinner is omitted here: every
+			// candidate in this group shares the same revision (group key).
 			sorted := make([]lineCandidate, len(group))
 			copy(sorted, group)
 			sort.SliceStable(sorted, func(i, j int) bool {

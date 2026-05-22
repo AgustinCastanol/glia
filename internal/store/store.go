@@ -304,6 +304,10 @@ func (s *Store) Rebuild() error {
 		return fmt.Errorf("Rebuild: %w", err)
 	}
 
+	// SyncState has no representation in memory.jsonl, so rebuildFromFile
+	// cannot reconstruct it. Carry provider watermarks forward across rebuild.
+	newIdx.SyncState = s.idx.SyncState
+
 	idxPath := filepath.Join(s.rootDir, indexFilename)
 	if err := newIdx.persist(idxPath); err != nil {
 		return fmt.Errorf("Rebuild: persist: %w", err)
