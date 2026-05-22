@@ -45,6 +45,10 @@ func readPullWatermark(s *store.Store, provider string) (time.Time, bool) {
 
 // writeWatermark persists the push watermark and counters for provider.
 // pushedAt is typically time.Now().UTC() after a successful push loop.
+//
+// The SyncState read + UpdateSyncState write is not atomic; callers MUST
+// serialize watermark writes per provider (the engine processes adapters
+// sequentially in deterministic order, so this holds in v1).
 func writeWatermark(s *store.Store, provider string, pushedAt time.Time, result ProviderResult) error {
 	st, _ := s.SyncState(provider)
 	st.LastPushedAt = pushedAt.UTC().Format(time.RFC3339)
@@ -53,6 +57,8 @@ func writeWatermark(s *store.Store, provider string, pushedAt time.Time, result 
 }
 
 // writePullWatermark persists the pull watermark and counters for provider.
+// Same non-atomic read-modify-write caveat as writeWatermark: callers MUST
+// serialize watermark writes per provider.
 func writePullWatermark(s *store.Store, provider string, pulledAt time.Time, result ProviderResult) error {
 	st, _ := s.SyncState(provider)
 	st.LastPulledAt = pulledAt.UTC().Format(time.RFC3339)
