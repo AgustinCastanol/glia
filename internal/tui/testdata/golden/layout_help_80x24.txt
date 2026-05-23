@@ -1,0 +1,24 @@
+ wrapper-mems                                                            q quit 
+ [O]bservations   [C]onflicts (0)   [S]tatus   [?]Help 
+Global                                Observations                          
+  O              Switch to              /              Focus filter input   
+Observations                            ↑ / k          Move selection up    
+  C              Switch to Conflicts    ↓ / j          Move selection down  
+  S              Switch to Status       enter          Full-screen detail   
+  ?              Switch to Help         esc            Clear filter / exit  
+  q / ctrl+c     Quit                 detail                                
+                                        c              Copy canonical_id    
+Conflicts                             (OSC52)                               
+  w              Accept winner (--keep  f              Cycle kind filter    
+1)                                      t              Cycle type filter    
+  l              Promote loser  (--     g / G          Top / bottom         
+keep 2)                                 r              Reload from disk     
+  s              Skip conflict                                              
+                                      Status                                
+                                        s              Run sync (full)      
+                                        p              Run sync pull        
+                                        P              Run sync push        
+                                        r              Refresh status data  
+                                                                            
+
+ O:obs  C:conflicts  S:status  ?:help  q:quit                                   

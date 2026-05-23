@@ -1,0 +1,24 @@
+ wrapper-mems                                                            q quit 
+ [O]bservations   [C]onflicts (0)   [S]tatus   [?]Help 
+> filter… (type: kind: provider:)       │ (no selection)                        
+No items.                               │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                                                                
+  /filter f:kind t:type r:reload c:copy-id enter:detail                         
+ O:obs  C:conflicts  S:status  ?:help  q:quit                                   
