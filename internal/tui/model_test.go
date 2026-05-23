@@ -21,7 +21,7 @@ func TestModel_TabSwitch_O(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
 	if cmd != nil {
-		// O should not issue a Cmd (pure state mutation).
+		t.Errorf("tab switch O should issue no Cmd, got %T", cmd)
 	}
 	result := updated.(Model)
 	if result.activeTab != tabObs {
@@ -180,5 +180,57 @@ func TestModel_View_QuitHintInHeader(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "quit") {
 		t.Errorf("view should contain quit hint\nview:\n%s", view)
+	}
+}
+
+// TestModel_SetSize_PropagatedToSubModels is a regression test for the
+// pointer-receiver fix (Fix 1). Previously all stub sub-models used value
+// receivers for SetSize, so mutations were lost to a copy. This verifies that
+// a WindowSizeMsg actually updates the underlying w/h fields on each sub-model.
+func TestModel_SetSize_PropagatedToSubModels(t *testing.T) {
+	m := New(t.TempDir())
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	result := updated.(Model)
+
+	// Verify the root model stored the size.
+	if result.w != 120 || result.h != 40 {
+		t.Errorf("root model: expected w=120 h=40, got w=%d h=%d", result.w, result.h)
+	}
+
+	// contentH = 40 - 3 = 37 (header + tabbar + statusbar subtracted in propagateSize)
+	wantW, wantH := 120, 37
+
+	// Cast to concrete pointer types to inspect unexported fields directly.
+	obs, ok := result.obs.(*obsModel)
+	if !ok {
+		t.Fatalf("result.obs is not *obsModel, got %T", result.obs)
+	}
+	if obs.w != wantW || obs.h != wantH {
+		t.Errorf("obsModel: expected w=%d h=%d, got w=%d h=%d", wantW, wantH, obs.w, obs.h)
+	}
+
+	conflict, ok := result.conflict.(*conflictModel)
+	if !ok {
+		t.Fatalf("result.conflict is not *conflictModel, got %T", result.conflict)
+	}
+	if conflict.w != wantW || conflict.h != wantH {
+		t.Errorf("conflictModel: expected w=%d h=%d, got w=%d h=%d", wantW, wantH, conflict.w, conflict.h)
+	}
+
+	status, ok := result.status.(*statusModel)
+	if !ok {
+		t.Fatalf("result.status is not *statusModel, got %T", result.status)
+	}
+	if status.w != wantW || status.h != wantH {
+		t.Errorf("statusModel: expected w=%d h=%d, got w=%d h=%d", wantW, wantH, status.w, status.h)
+	}
+
+	help, ok := result.help.(*helpModel)
+	if !ok {
+		t.Fatalf("result.help is not *helpModel, got %T", result.help)
+	}
+	if help.w != wantW || help.h != wantH {
+		t.Errorf("helpModel: expected w=%d h=%d, got w=%d h=%d", wantW, wantH, help.w, help.h)
 	}
 }

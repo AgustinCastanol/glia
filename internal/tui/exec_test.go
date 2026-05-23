@@ -165,3 +165,15 @@ func TestSyncCmd_ReturnsTeeMsg(t *testing.T) {
 		t.Fatal("syncCmd returned nil tea.Cmd")
 	}
 }
+
+// TestSyncCmd_NilRunnerPanics asserts that passing nil as the runner panics
+// immediately (before the tea.Cmd closure runs). This guards against callers
+// forgetting to inject a real runner and silently executing nothing.
+func TestSyncCmd_NilRunnerPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when runner is nil, but syncCmd did not panic")
+		}
+	}()
+	syncCmd("/d", nil, "sync") // must panic here, not inside the closure
+}

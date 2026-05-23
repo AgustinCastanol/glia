@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -242,6 +243,80 @@ func TestLoadIndexFile_MissingFile(t *testing.T) {
 	}
 	if len(snap.Conflicts) != 0 {
 		t.Errorf("expected 0 conflicts, got %d", len(snap.Conflicts))
+	}
+}
+
+// TestCallStatusJSON_NonZeroExitEmptyOutput is a regression test for Fix 2.
+// When the subprocess exits non-zero AND produces empty stdout (e.g. a crash
+// before any output), the original code checked `out == nil` — but cmd.Run
+// returns []byte{} (not nil). The empty slice passed the nil check and then
+// json.Unmarshal failed with "unexpected end of JSON input" instead of
+// propagating the real exec error.
+// The fix checks len(out)==0 so the exec error is returned directly.
+func TestCallStatusJSON_NonZeroExitEmptyOutput(t *testing.T) {
+	execErr := errors.New("exit status 2")
+
+	dl := &dataLayer{
+		runner: func(name string, args ...string) ([]byte, error) {
+			// Simulate crash: non-zero exit, empty (not nil) stdout.
+			return []byte{}, execErr
+		},
+	}
+
+	_, err := dl.callStatusJSON("/tmp/testdir")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	// The error must wrap the exec error, not be a JSON parse error.
+	if !errors.Is(err, execErr) {
+		t.Errorf("expected error to wrap execErr, got: %v", err)
+	}
+}
+
+// TestLoadRecords_DeterministicOrder is a regression test for Fix 3.
+// map iteration in Go is random, so without an explicit sort the slice order
+// changes between calls, causing TUI list flicker. This calls loadRecords twice
+// on the same fixture and asserts the order is identical both times.
+func TestLoadRecords_DeterministicOrder(t *testing.T) {
+	dir := t.TempDir()
+	storeDir := filepath.Join(dir, ".wrapper-mems")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	recs := []any{
+		makeRecord("ccc", 1, false),
+		makeRecord("aaa", 1, false),
+		makeRecord("bbb", 1, false),
+		makeRecord("zzz", 1, false),
+		makeRecord("mmm", 1, false),
+	}
+	writeJSONL(t, filepath.Join(storeDir, "memory.jsonl"), recs)
+
+	first, err := loadRecords(storeDir)
+	if err != nil {
+		t.Fatalf("first loadRecords: %v", err)
+	}
+	second, err := loadRecords(storeDir)
+	if err != nil {
+		t.Fatalf("second loadRecords: %v", err)
+	}
+
+	if len(first) != len(second) {
+		t.Fatalf("length mismatch: %d vs %d", len(first), len(second))
+	}
+	for i := range first {
+		if first[i].CanonicalID != second[i].CanonicalID {
+			t.Errorf("position %d: first=%q second=%q — order is non-deterministic",
+				i, first[i].CanonicalID, second[i].CanonicalID)
+		}
+	}
+	// Also verify the order is lexicographic by CanonicalID.
+	wantOrder := []string{"aaa", "bbb", "ccc", "mmm", "zzz"}
+	for i, want := range wantOrder {
+		if first[i].CanonicalID != want {
+			t.Errorf("position %d: expected %q, got %q", i, want, first[i].CanonicalID)
+		}
 	}
 }
 
