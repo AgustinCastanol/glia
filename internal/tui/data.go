@@ -53,11 +53,62 @@ func defaultRunner(name string, args ...string) ([]byte, error) {
 	return runCommand(name, args...)
 }
 
+// indexLine is the minimal decode of a JSONL line used during loadRecords.
+// Only the fields needed for the list view and collapse logic are decoded.
+// The full line bytes are kept in RawLine so the detail pane can do a full
+// decode when the record is selected. This lazy approach keeps startup under
+// the 100ms budget for 100k-line stores. (REQ-TUI-04)
+type indexLine struct {
+	SchemaVersion int    `json:"schema_version"`
+	CanonicalID   string `json:"canonical_id"`
+	Revision      int    `json:"revision"`
+	Deleted       bool   `json:"deleted"`
+	// Title, Kind, Type: displayed in the list — decoded here.
+	Title string `json:"title"`
+	Kind  string `json:"kind"`
+	Type  string `json:"type"`
+}
+
+// decodeFullRecord performs a full unmarshal of rawLine into a CanonicalRecord.
+// Called lazily when the user selects a record and the detail pane needs the body.
+func decodeFullRecord(rawLine []byte) (store.CanonicalRecord, error) {
+	var rec store.CanonicalRecord
+	if err := json.Unmarshal(rawLine, &rec); err != nil {
+		return rec, fmt.Errorf("decodeFullRecord: %w", err)
+	}
+	return rec, nil
+}
+
+// LazyRecord holds the index fields decoded on load plus the raw JSONL bytes
+// for full decoding on demand. (REQ-TUI-04: lazy content parsing)
+type LazyRecord struct {
+	// Index fields — decoded eagerly for list display.
+	CanonicalID string
+	Revision    int
+	Title       string
+	Kind        string
+	Type        string
+
+	// rawLine contains the original JSONL bytes. Call Decode() to get the full
+	// store.CanonicalRecord including the Content body.
+	rawLine []byte
+}
+
+// Decode returns the full CanonicalRecord by unmarshaling rawLine.
+// Call this only when the detail pane needs the record body.
+func (lr *LazyRecord) Decode() (store.CanonicalRecord, error) {
+	return decodeFullRecord(lr.rawLine)
+}
+
+// FilterValue exposes fields used by the filter function.
+func (lr *LazyRecord) FilterValue() string { return lr.Title }
+
 // loadRecords reads memory.jsonl from storeDir, streaming line-by-line with a
-// 1 MB buffer. It collapses duplicate canonical_ids, keeping the entry with the
-// highest revision and dropping tombstones (deleted=true). This mirrors
-// store.ListLive semantics without acquiring the advisory lock (REQ-TUI-02).
-func loadRecords(storeDir string) ([]store.CanonicalRecord, error) {
+// 1 MB buffer. It returns LazyRecords — only index fields are decoded eagerly;
+// the full record body is decoded on demand via LazyRecord.Decode().
+// This keeps startup under the 100ms budget for 100k-line stores. (REQ-TUI-04)
+// It mirrors store.ListLive semantics without the advisory lock. (REQ-TUI-02)
+func loadRecords(storeDir string) ([]LazyRecord, error) {
 	path := filepath.Join(storeDir, "memory.jsonl")
 	f, err := os.Open(path)
 	if err != nil {
@@ -73,8 +124,11 @@ func loadRecords(storeDir string) ([]store.CanonicalRecord, error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(buf, 1<<20)
 
-	// Map from canonical_id → winning record.
-	byID := make(map[string]store.CanonicalRecord)
+	type winner struct {
+		idx indexLine
+		raw []byte
+	}
+	byID := make(map[string]winner)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -82,45 +136,45 @@ func loadRecords(storeDir string) ([]store.CanonicalRecord, error) {
 			continue
 		}
 
-		// Two-pass decode: first check schema_version to skip unsupported lines,
-		// then full decode.
-		var probe struct {
-			SchemaVersion int    `json:"schema_version"`
-			CanonicalID   string `json:"canonical_id"`
-			Revision      int    `json:"revision"`
-		}
-		if err := json.Unmarshal(line, &probe); err != nil {
+		var idx indexLine
+		if err := json.Unmarshal(line, &idx); err != nil {
 			continue // skip malformed lines
 		}
-		if probe.SchemaVersion > store.StoreSupportedVersion {
+		if idx.SchemaVersion > store.StoreSupportedVersion {
 			continue // skip future-schema lines
 		}
-		if probe.CanonicalID == "" {
+		if idx.CanonicalID == "" {
 			continue // skip schema_version header lines
 		}
-
-		var rec store.CanonicalRecord
-		if err := json.Unmarshal(line, &rec); err != nil {
-			continue // skip malformed records
+		if idx.Deleted {
+			// If a tombstone arrives after a live record, remove it.
+			delete(byID, idx.CanonicalID)
+			continue
 		}
 
-		existing, ok := byID[rec.CanonicalID]
-		if !ok || rec.Revision > existing.Revision {
-			byID[rec.CanonicalID] = rec
+		existing, ok := byID[idx.CanonicalID]
+		if !ok || idx.Revision > existing.idx.Revision {
+			// Copy line bytes — scanner reuses its buffer.
+			lineCopy := make([]byte, len(line))
+			copy(lineCopy, line)
+			byID[idx.CanonicalID] = winner{idx: idx, raw: lineCopy}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("loadRecords: scan %s: %w", path, err)
 	}
 
-	// Collect live records (non-deleted) then sort by CanonicalID for a
-	// stable, deterministic order. Map iteration in Go is randomized, so
-	// without an explicit sort the TUI list would flicker between renders.
-	records := make([]store.CanonicalRecord, 0, len(byID))
-	for _, r := range byID {
-		if !r.Deleted {
-			records = append(records, r)
-		}
+	// Collect and sort by CanonicalID for deterministic order.
+	records := make([]LazyRecord, 0, len(byID))
+	for _, w := range byID {
+		records = append(records, LazyRecord{
+			CanonicalID: w.idx.CanonicalID,
+			Revision:    w.idx.Revision,
+			Title:       w.idx.Title,
+			Kind:        w.idx.Kind,
+			Type:        w.idx.Type,
+			rawLine:     w.raw,
+		})
 	}
 	sort.Slice(records, func(i, j int) bool {
 		return records[i].CanonicalID < records[j].CanonicalID
