@@ -33,24 +33,27 @@ func runCommand(name string, args ...string) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
+// runCommandExec is the production execRunner: adapts runCommand (variadic) to
+// the execRunner signature (slice). Pass this to syncCmd in production code.
+func runCommandExec(name string, args []string) ([]byte, error) {
+	return runCommand(name, args...)
+}
+
 // syncCmd returns a tea.Cmd that runs `wrapper-mems --dir <dir> <args...>` as a
 // subprocess, captures its combined stdout/stderr, and emits syncDoneMsg when
 // the subprocess exits. The spinner ticks while this Cmd runs on Bubble Tea's
 // off-UI goroutine. (REQ-TUI-10)
 //
-// runner is the subprocess executor. Pass nil to use the real os/exec runner.
+// runner must not be nil. In production pass runCommandExec; in tests inject a
+// fake runner so no real subprocess is spawned.
 func syncCmd(dir string, runner execRunner, args ...string) tea.Cmd {
+	if runner == nil {
+		panic("syncCmd: runner must not be nil — pass runCommandExec in production")
+	}
 	return func() tea.Msg {
-		r := runner
-		if r == nil {
-			r = func(name string, a []string) ([]byte, error) {
-				return runCommand(name, a...)
-			}
-		}
-
 		// Build argument list: --dir <dir> <args...>
 		fullArgs := append([]string{"--dir", dir}, args...)
-		out, err := r(os.Args[0], fullArgs)
+		out, err := runner(os.Args[0], fullArgs)
 
 		// Trim trailing whitespace for clean overlay display.
 		output := strings.TrimRight(string(out), "\n")

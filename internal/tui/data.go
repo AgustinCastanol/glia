@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/agustincastanol/wrapper-mems/internal/store"
 )
@@ -112,14 +113,18 @@ func loadRecords(storeDir string) ([]store.CanonicalRecord, error) {
 		return nil, fmt.Errorf("loadRecords: scan %s: %w", path, err)
 	}
 
-	// Collect live records (non-deleted), preserving deterministic order by
-	// iterating a stable pass. Build a slice in insertion-order approximation.
+	// Collect live records (non-deleted) then sort by CanonicalID for a
+	// stable, deterministic order. Map iteration in Go is randomized, so
+	// without an explicit sort the TUI list would flicker between renders.
 	records := make([]store.CanonicalRecord, 0, len(byID))
 	for _, r := range byID {
 		if !r.Deleted {
 			records = append(records, r)
 		}
 	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].CanonicalID < records[j].CanonicalID
+	})
 	return records, nil
 }
 
@@ -164,7 +169,9 @@ func (d *dataLayer) callStatusJSON(dir string) (*StatusJSON, error) {
 	if err != nil {
 		// Non-zero exit is expected when providers are degraded (exit 1).
 		// We still parse the JSON body — only a parse failure is fatal.
-		if out == nil {
+		// Use len(out)==0 rather than out==nil: cmd.Run returns []byte{} (not nil)
+		// when the process exits non-zero with empty stdout.
+		if len(out) == 0 {
 			return nil, fmt.Errorf("callStatusJSON: run: %w", err)
 		}
 	}

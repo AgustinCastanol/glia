@@ -67,38 +67,38 @@ type subModel interface {
 // obsModel is a stub for the Observations tab (fully implemented in PR-3).
 type obsModel struct{ w, h int }
 
-func newObsModel(_ string) obsModel         { return obsModel{} }
-func (m obsModel) Init() tea.Cmd            { return nil }
-func (m obsModel) View() string             { return mutedText.Render("[Observations — coming in PR-3]") }
-func (m obsModel) SetSize(w, h int)         { m.w, m.h = w, h }
-func (m obsModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
+func newObsModel(_ string) *obsModel         { return &obsModel{} }
+func (m *obsModel) Init() tea.Cmd            { return nil }
+func (m *obsModel) View() string             { return mutedText.Render("[Observations — coming in PR-3]") }
+func (m *obsModel) SetSize(w, h int)         { m.w, m.h = w, h }
+func (m *obsModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
 
 // conflictModel is a stub for the Conflicts tab (fully implemented in PR-3).
 type conflictModel struct{ w, h int }
 
-func newConflictModel(_ string) conflictModel { return conflictModel{} }
-func (m conflictModel) Init() tea.Cmd         { return nil }
-func (m conflictModel) View() string          { return mutedText.Render("[Conflicts — coming in PR-3]") }
-func (m conflictModel) SetSize(w, h int)      { m.w, m.h = w, h }
-func (m conflictModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
+func newConflictModel(_ string) *conflictModel { return &conflictModel{} }
+func (m *conflictModel) Init() tea.Cmd         { return nil }
+func (m *conflictModel) View() string          { return mutedText.Render("[Conflicts — coming in PR-3]") }
+func (m *conflictModel) SetSize(w, h int)      { m.w, m.h = w, h }
+func (m *conflictModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
 
 // statusModel is a stub for the Status tab (fully implemented in PR-3).
 type statusModel struct{ w, h int }
 
-func newStatusModel(_ string) statusModel   { return statusModel{} }
-func (m statusModel) Init() tea.Cmd         { return nil }
-func (m statusModel) View() string          { return mutedText.Render("[Status — coming in PR-3]") }
-func (m statusModel) SetSize(w, h int)      { m.w, m.h = w, h }
-func (m statusModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
+func newStatusModel(_ string) *statusModel   { return &statusModel{} }
+func (m *statusModel) Init() tea.Cmd         { return nil }
+func (m *statusModel) View() string          { return mutedText.Render("[Status — coming in PR-3]") }
+func (m *statusModel) SetSize(w, h int)      { m.w, m.h = w, h }
+func (m *statusModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
 
 // helpModel is a stub for the Help tab (fully implemented in PR-3).
 type helpModel struct{ w, h int }
 
-func newHelpModel() helpModel             { return helpModel{} }
-func (m helpModel) Init() tea.Cmd         { return nil }
-func (m helpModel) View() string          { return mutedText.Render("[Help — coming in PR-3]") }
-func (m helpModel) SetSize(w, h int)      { m.w, m.h = w, h }
-func (m helpModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
+func newHelpModel() *helpModel             { return &helpModel{} }
+func (m *helpModel) Init() tea.Cmd         { return nil }
+func (m *helpModel) View() string          { return mutedText.Render("[Help — coming in PR-3]") }
+func (m *helpModel) SetSize(w, h int)      { m.w, m.h = w, h }
+func (m *helpModel) Update(msg tea.Msg) (subModel, tea.Cmd) { return m, nil }
 
 // Model is the root Bubble Tea model. It owns tab routing, window sizing,
 // global key dispatch, and the sync overlay. (REQ-TUI-05, REQ-TUI-11)
