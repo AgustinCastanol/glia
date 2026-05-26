@@ -155,7 +155,7 @@ func minimalRecord(id, title string) engram.EngramRecord {
 // S-01: ToCanonical purity — no provider calls
 // ---------------------------------------------------------------------------
 func TestToCanonical_Purity_NoProviderCalls(t *testing.T) {
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 	rec := minimalRecord("obs-001", "Pure test")
 	idmap := &emptyIDMap{}
 
@@ -175,7 +175,7 @@ func TestToCanonical_Purity_NoProviderCalls(t *testing.T) {
 // S-02: FromCanonical purity — no provider calls
 // ---------------------------------------------------------------------------
 func TestFromCanonical_Purity_NoProviderCalls(t *testing.T) {
-	a := engram.New(&panicCommander{t: t}, nil)
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, nil)
 	canonical := store.CanonicalRecord{
 		CanonicalID:   "01JTESTULID01",
 		Kind:          "observation",
@@ -225,7 +225,7 @@ func TestListNative_PersonalScopeFiltered(t *testing.T) {
 	}
 
 	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
-	a := engram.New(&fakeCommander{}, tr)
+	a := engram.New(engram.Config{Commander: &fakeCommander{}}, tr)
 
 	since := time.Time{}
 	ids, err := a.ListNative(context.Background(), "testproject", since)
@@ -257,7 +257,7 @@ func TestListNative_SinceBoundary_WholeSecond_Included(t *testing.T) {
 	}
 
 	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
-	a := engram.New(&fakeCommander{}, tr)
+	a := engram.New(engram.Config{Commander: &fakeCommander{}}, tr)
 
 	// Whole-second `since` exactly equal to the boundary record's updated_at.
 	since := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
@@ -288,7 +288,7 @@ func TestListNative_CrossProjectFiltered(t *testing.T) {
 	}
 
 	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
-	a := engram.New(&fakeCommander{}, tr)
+	a := engram.New(engram.Config{Commander: &fakeCommander{}}, tr)
 
 	ids, err := a.ListNative(context.Background(), "myproject", time.Time{})
 	if err != nil {
@@ -311,7 +311,7 @@ func TestListNative_DaemonDown_ErrUnavailable(t *testing.T) {
 	tr := &fakeTransport{
 		exportErr: fmt.Errorf("%w: connection refused", adapter.ErrUnavailable),
 	}
-	a := engram.New(&fakeCommander{}, tr)
+	a := engram.New(engram.Config{Commander: &fakeCommander{}}, tr)
 
 	_, err := a.ListNative(context.Background(), "testproject", time.Time{})
 	if !errors.Is(err, adapter.ErrUnavailable) {
@@ -334,7 +334,7 @@ func TestWriteNative_Idempotence_ExistingRecord(t *testing.T) {
 			"search": {stdout: data},
 		},
 	}
-	a := engram.New(cmd, nil)
+	a := engram.New(engram.Config{Commander: cmd}, nil)
 
 	rec := engram.EngramRecord{
 		ID:      existingID,
@@ -371,7 +371,7 @@ func TestReadNative_HTTPFallback_DaemonDown(t *testing.T) {
 			adapter.NativeID("obs-missing"): fmt.Errorf("%w: connection refused", adapter.ErrUnavailable),
 		},
 	}
-	a := engram.New(cmd, tr)
+	a := engram.New(engram.Config{Commander: cmd}, tr)
 
 	_, err := a.ReadNative(context.Background(), "obs-missing")
 	if !errors.Is(err, adapter.ErrUnavailable) {
@@ -410,7 +410,7 @@ func TestReadNative_HTTPFallback_DaemonUp_RecordFound(t *testing.T) {
 		},
 	}
 	tr := &httpTestTransport{baseURL: ts.URL}
-	a := engram.New(cmd, tr)
+	a := engram.New(engram.Config{Commander: cmd}, tr)
 
 	native, err := a.ReadNative(context.Background(), "obs-http-001")
 	if err != nil {
@@ -468,7 +468,7 @@ func TestReadNative_NotFoundInEitherPath(t *testing.T) {
 			adapter.NativeID("obs-404"): adapter.ErrNotFound,
 		},
 	}
-	a := engram.New(cmd, tr)
+	a := engram.New(engram.Config{Commander: cmd}, tr)
 
 	_, err := a.ReadNative(context.Background(), "obs-404")
 	if !errors.Is(err, adapter.ErrNotFound) {
@@ -481,7 +481,7 @@ func TestReadNative_NotFoundInEitherPath(t *testing.T) {
 // ---------------------------------------------------------------------------
 func TestReadNative_ContextCancellation(t *testing.T) {
 	cmd := &blockingCommander{}
-	a := engram.New(cmd, nil)
+	a := engram.New(engram.Config{Commander: cmd}, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -509,7 +509,7 @@ func TestToCanonical_TimestampNormalization(t *testing.T) {
 	rec.CreatedAt = "2026-05-16T01:33:00.000000000Z"
 	rec.UpdatedAt = "2026-05-16T04:27:57.123456789Z"
 
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 	canonical, err := a.ToCanonical(rec, &emptyIDMap{})
 	if err != nil {
 		t.Fatalf("ToCanonical error: %v", err)
@@ -533,7 +533,7 @@ func TestToCanonical_TimestampNormalization(t *testing.T) {
 func TestAuthorAttribution_EnvOverride(t *testing.T) {
 	t.Setenv("WRAPPER_MEMS_AUTHOR", "ci-bot@build-server")
 
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 	rec := minimalRecord("obs-author", "Author test")
 	canonical, err := a.ToCanonical(rec, &emptyIDMap{})
 	if err != nil {
@@ -551,7 +551,7 @@ func TestAuthorAttribution_DefaultFallback(t *testing.T) {
 	// Clear WRAPPER_MEMS_AUTHOR so we hit the fallback.
 	os.Unsetenv("WRAPPER_MEMS_AUTHOR")
 
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 	rec := minimalRecord("obs-author2", "Author fallback test")
 	canonical, err := a.ToCanonical(rec, &emptyIDMap{})
 	if err != nil {
@@ -567,7 +567,7 @@ func TestAuthorAttribution_DefaultFallback(t *testing.T) {
 // S-15: Relation records → ErrUnsupported
 // ---------------------------------------------------------------------------
 func TestToCanonical_RelationRecord_ErrUnsupported(t *testing.T) {
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 	rec := minimalRecord("obs-rel", "Relation")
 	rec.Type = "relation"
 
@@ -581,7 +581,7 @@ func TestToCanonical_RelationRecord_ErrUnsupported(t *testing.T) {
 // S-16: Personal-scope record in ToCanonical → error
 // ---------------------------------------------------------------------------
 func TestToCanonical_PersonalScope_Error(t *testing.T) {
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 	rec := minimalRecord("obs-personal", "Personal record")
 	rec.Scope = "personal"
 
@@ -601,7 +601,7 @@ func TestToCanonical_RevisionIncrement_ExistingMapping(t *testing.T) {
 			"obs-xyz": "canonical-001",
 		},
 	}
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 	rec := minimalRecord("obs-xyz", "Existing record")
 
 	canonical, err := a.ToCanonical(rec, idmap)
@@ -628,7 +628,7 @@ func TestToCanonical_BackwardUpdatedAt_WarningNotError(t *testing.T) {
 			"obs-back": "canonical-002",
 		},
 	}
-	a := engram.New(&panicCommander{t: t}, &panicTransport{t: t})
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, &panicTransport{t: t})
 
 	// Incoming record has an older UpdatedAt than would be expected.
 	rec := minimalRecord("obs-back", "Backward ts")
@@ -710,7 +710,7 @@ func TestHealth_EngramUnavailable(t *testing.T) {
 			"version": {err: errors.New("exit status 1")},
 		},
 	}
-	a := engram.New(cmd, nil)
+	a := engram.New(engram.Config{Commander: cmd}, nil)
 	err := a.Health(context.Background())
 	if !errors.Is(err, adapter.ErrUnavailable) {
 		t.Errorf("expected ErrUnavailable, got %v", err)
@@ -723,7 +723,7 @@ func TestHealth_EngramAvailable(t *testing.T) {
 			"version": {stdout: []byte("engram v1.15.3\n")},
 		},
 	}
-	a := engram.New(cmd, nil)
+	a := engram.New(engram.Config{Commander: cmd}, nil)
 	err := a.Health(context.Background())
 	if err != nil {
 		t.Errorf("expected nil, got %v", err)
@@ -734,7 +734,7 @@ func TestHealth_EngramAvailable(t *testing.T) {
 // FromCanonical: relation record → ErrUnsupported
 // ---------------------------------------------------------------------------
 func TestFromCanonical_RelationRecord_ErrUnsupported(t *testing.T) {
-	a := engram.New(&panicCommander{t: t}, nil)
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}}, nil)
 	canonical := store.CanonicalRecord{
 		CanonicalID:   "rel-001",
 		Kind:          "relation",
@@ -750,7 +750,7 @@ func TestFromCanonical_RelationRecord_ErrUnsupported(t *testing.T) {
 // Name()
 // ---------------------------------------------------------------------------
 func TestName(t *testing.T) {
-	a := engram.New(nil, nil)
+	a := engram.New(engram.Config{}, nil)
 	if a.Name() != "engram" {
 		t.Errorf("Name()=%q, want %q", a.Name(), "engram")
 	}
