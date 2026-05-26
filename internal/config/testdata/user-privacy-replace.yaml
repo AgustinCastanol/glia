@@ -1,0 +1,3 @@
+privacy:
+  excluded_session_ids:
+    - sess_xyz

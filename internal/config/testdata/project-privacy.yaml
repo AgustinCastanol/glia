@@ -1,0 +1,6 @@
+schema_version: 1
+project: privacy-test
+privacy:
+  excluded_session_ids:
+    - sess_abc
+    - sess_def
