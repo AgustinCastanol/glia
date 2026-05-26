@@ -56,8 +56,12 @@ func skipIfDaemonDown(t *testing.T) {
 
 // realAdapter builds an EngramAdapter backed by the production Commander and
 // HTTP transport. This is the real exec boundary exercised by integration tests.
+// Uses default values: cliPath="engram" (PATH lookup), baseURL="http://127.0.0.1:7437".
 func realAdapter() *engram.EngramAdapter {
-	return engram.New(engram.NewExecCommander(), engram.NewHTTPTransport())
+	return engram.New(
+		engram.Config{CLIPath: "engram", HTTPBaseURL: "http://127.0.0.1:7437"},
+		engram.NewHTTPTransport("http://127.0.0.1:7437"),
+	)
 }
 
 // TestIntegration_Health verifies S-17: Health returns nil when engram is available.
