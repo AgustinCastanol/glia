@@ -173,9 +173,11 @@ func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
 	}
 
 	// Build adapter map. In v1, adapters are hard-wired; a registry is future work.
+	// TODO(T-1.12): replace with buildAdapters(loadedConfig) once wiring helper exists.
 	adapters := map[string]adapter.Adapter{
-		"engram":     engram.New(engram.NewExecCommander(), engram.NewHTTPTransport()),
-		"claude-mem": claudemem.New(claudemem.NewHTTPTransport("")),
+		"engram": engram.New(engram.Config{CLIPath: "engram", HTTPBaseURL: "http://127.0.0.1:7437"},
+			engram.NewHTTPTransport("http://127.0.0.1:7437")),
+		"claude-mem": claudemem.New(claudemem.Config{}, claudemem.NewHTTPTransport("")),
 	}
 
 	return enginesync.New(s, adapters, cfg, opts, os.Stderr), nil

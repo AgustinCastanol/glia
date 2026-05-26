@@ -52,7 +52,7 @@ func workerBaseURL() string { return resolveBaseURL("") }
 // test if the worker is unreachable.
 func liveAdapter(t *testing.T) *ClaudeMemAdapter {
 	t.Helper()
-	a := New(NewHTTPTransport(""))
+	a := New(Config{}, NewHTTPTransport(""))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := a.Health(ctx); err != nil {

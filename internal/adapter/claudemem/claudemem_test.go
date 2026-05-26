@@ -308,7 +308,7 @@ func TestHTTPTransport_GetByIDUnavailable(t *testing.T) {
 
 // TestName_ReturnsClaudioMem verifies REQ-CM-02.
 func TestName_ReturnsClaudioMem(t *testing.T) {
-	a := New(nil)
+	a := New(Config{}, nil)
 	if got := a.Name(); got != "claude-mem" {
 		t.Fatalf("expected \"claude-mem\", got %q", got)
 	}
@@ -320,7 +320,7 @@ func TestName_ReturnsClaudioMem(t *testing.T) {
 
 // TestWriteNative_ReturnsErrUnsupported verifies scenario C (partial, PR#1 scope).
 func TestWriteNative_ReturnsErrUnsupported(t *testing.T) {
-	a := New(nil)
+	a := New(Config{}, nil)
 	id, err := a.WriteNative(context.Background(), nil)
 	if id != "" {
 		t.Fatalf("expected empty ID, got %q", id)
@@ -375,7 +375,7 @@ func (f *fakeIDMap) NativeFromCanonical(id adapter.CanonicalID) (adapter.NativeI
 }
 
 // newAdapter constructs a ClaudeMemAdapter backed by a panicTransport.
-func newAdapter() *ClaudeMemAdapter { return New(panicTransport{}) }
+func newAdapter() *ClaudeMemAdapter { return New(Config{}, panicTransport{}) }
 
 // makeRec builds a claudeMemRecord with Raw populated from its own JSON.
 // Signature reflects the verified live shape (2026-05-20): numeric id,
@@ -997,7 +997,7 @@ func idStr(id int64) string { return fmt.Sprintf("%d", id) }
 
 // TestHealth_NilTransport_ErrUnavailable verifies nil transport returns ErrUnavailable.
 func TestHealth_NilTransport_ErrUnavailable(t *testing.T) {
-	a := New(nil)
+	a := New(Config{}, nil)
 	err := a.Health(context.Background())
 	if !isUnavailable(err) {
 		t.Fatalf("expected ErrUnavailable for nil transport, got %v", err)
@@ -1006,7 +1006,7 @@ func TestHealth_NilTransport_ErrUnavailable(t *testing.T) {
 
 // TestHealth_OK verifies nil error from transport → nil returned (Scenario F happy path).
 func TestHealth_OK(t *testing.T) {
-	a := New(&fakeTransport{healthErr: nil})
+	a := New(Config{}, &fakeTransport{healthErr: nil})
 	if err := a.Health(context.Background()); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
@@ -1015,7 +1015,7 @@ func TestHealth_OK(t *testing.T) {
 // TestHealth_TransportError_WrapsErrUnavailable verifies Scenario F: transport
 // failure is wrapped as ErrUnavailable.
 func TestHealth_TransportError_WrapsErrUnavailable(t *testing.T) {
-	a := New(&fakeTransport{healthErr: fmt.Errorf("%w: connection refused", adapter.ErrUnavailable)})
+	a := New(Config{}, &fakeTransport{healthErr: fmt.Errorf("%w: connection refused", adapter.ErrUnavailable)})
 	err := a.Health(context.Background())
 	if !isUnavailable(err) {
 		t.Fatalf("expected ErrUnavailable, got %v", err)
@@ -1026,7 +1026,7 @@ func TestHealth_TransportError_WrapsErrUnavailable(t *testing.T) {
 func TestHealth_ContextCancelled_Propagates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
-	a := New(&fakeTransport{healthErr: context.Canceled})
+	a := New(Config{}, &fakeTransport{healthErr: context.Canceled})
 	err := a.Health(ctx)
 	if err == nil {
 		t.Fatal("expected error for cancelled context, got nil")
@@ -1085,7 +1085,7 @@ func TestListNative_ThreePagePagination_ProjectFilter(t *testing.T) {
 	}
 
 	ft := &fakeTransport{pages: buildPages(p1, p2, p3)}
-	a := New(ft)
+	a := New(Config{}, ft)
 	since := time.Time{} // zero time — accept all
 
 	ids, err := a.ListNative(context.Background(), "my-project", since)
@@ -1137,7 +1137,7 @@ func TestListNative_SinceFilter(t *testing.T) {
 	}
 
 	ft := &fakeTransport{pages: buildPages(items)}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	sinceTime, _ := time.Parse(time.RFC3339, cutoff)
 	ids, err := a.ListNative(context.Background(), "proj", sinceTime)
@@ -1171,7 +1171,7 @@ func TestListNative_CrossProjectIsolation(t *testing.T) {
 	}
 
 	ft := &fakeTransport{pages: buildPages(items)}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	ids, err := a.ListNative(context.Background(), "proj-B", time.Time{})
 	if err != nil {
@@ -1200,7 +1200,7 @@ func TestListNative_TimestampNormalization(t *testing.T) {
 	})
 
 	ft := &fakeTransport{pages: buildPages([]json.RawMessage{sqliteItem})}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	since, _ := time.Parse(time.RFC3339, "2026-05-16T14:00:00Z")
 	ids, err := a.ListNative(context.Background(), "proj", since)
@@ -1226,7 +1226,7 @@ func TestListNative_UnparseableCreatedAt_Skipped(t *testing.T) {
 	goodItem := makeRawItem(777, "proj", "2026-05-17T10:00:00Z")
 
 	ft := &fakeTransport{pages: buildPages([]json.RawMessage{badItem, goodItem})}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	ids, err := a.ListNative(context.Background(), "proj", time.Time{})
 	if err != nil {
@@ -1243,7 +1243,7 @@ func TestListNative_UnparseableCreatedAt_Skipped(t *testing.T) {
 func TestListNative_ContextCancellation_Aborts(t *testing.T) {
 	// Script the transport to return context.Canceled so the test is deterministic.
 	ft := &fakeTransport{listPageErr: context.Canceled}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1266,7 +1266,7 @@ func TestListNative_EmptyPageWithHasMoreTrue_Terminates(t *testing.T) {
 			{Items: []json.RawMessage{}, HasMore: true},
 		},
 	}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	ids, err := a.ListNative(context.Background(), "proj", time.Time{})
 	if err != nil {
@@ -1300,7 +1300,7 @@ func TestReadNative_HappyPath_PerID(t *testing.T) {
 		getByIDFound: true,
 		getByIDBody:  bodyBytes,
 	}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	rec, err := a.ReadNative(context.Background(), "1")
 	if err != nil {
@@ -1327,7 +1327,7 @@ func TestReadNative_CleanNotFound_ErrNotFound(t *testing.T) {
 	ft := &fakeTransport{
 		getByIDErr: adapter.ErrNotFound,
 	}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	_, err := a.ReadNative(context.Background(), "missing")
 	if !isNotFound(err) {
@@ -1356,7 +1356,7 @@ func TestReadNative_DegradeToScan_Found(t *testing.T) {
 		getByIDErr: fmt.Errorf("%w: endpoint not found", adapter.ErrUnavailable),
 		pages:      buildPages(items),
 	}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	rec, err := a.ReadNative(context.Background(), "42")
 	if err != nil {
@@ -1383,7 +1383,7 @@ func TestReadNative_DegradeToScan_Exhausted_ErrNotFound(t *testing.T) {
 		getByIDErr: fmt.Errorf("%w: 5xx", adapter.ErrUnavailable),
 		pages:      buildPages(items),
 	}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	_, err := a.ReadNative(context.Background(), "9999")
 	if !isNotFound(err) {
@@ -1393,7 +1393,7 @@ func TestReadNative_DegradeToScan_Exhausted_ErrNotFound(t *testing.T) {
 
 // TestReadNative_NilTransport_ErrUnavailable verifies nil transport returns ErrUnavailable.
 func TestReadNative_NilTransport_ErrUnavailable(t *testing.T) {
-	a := New(nil)
+	a := New(Config{}, nil)
 	_, err := a.ReadNative(context.Background(), "any")
 	if !isUnavailable(err) {
 		t.Fatalf("expected ErrUnavailable for nil transport, got %v", err)
@@ -1409,7 +1409,7 @@ func TestReadNative_DegradeToScan_TransportError_ErrUnavailable(t *testing.T) {
 		// ListPage also returns ErrUnavailable (network down during scan).
 		listPageErr: fmt.Errorf("%w: refused during scan", adapter.ErrUnavailable),
 	}
-	a := New(ft)
+	a := New(Config{}, ft)
 
 	_, err := a.ReadNative(context.Background(), "obs-x")
 	if !isUnavailable(err) {
@@ -1418,22 +1418,26 @@ func TestReadNative_DegradeToScan_TransportError_ErrUnavailable(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// authorAttribution tests
+// Author attribution tests (via adapter.cfg.Author → identity.Resolve)
 // ---------------------------------------------------------------------------
 
+// TestAuthorAttribution_EnvOverride verifies that WRAPPER_MEMS_AUTHOR is used
+// as the canonical author when set, propagated through the adapter cfg.
 func TestAuthorAttribution_EnvOverride(t *testing.T) {
 	t.Setenv("WRAPPER_MEMS_AUTHOR", "test-author")
-	got := authorAttribution()
-	if got != "test-author" {
-		t.Fatalf("expected %q, got %q", "test-author", got)
+	a := New(Config{}, nil) // Config.Author="" → identity.Resolve("") → env wins
+	if a.cfg.Author != "test-author" {
+		t.Fatalf("expected %q, got %q", "test-author", a.cfg.Author)
 	}
 }
 
+// TestAuthorAttribution_FallbackNonEmpty verifies that a non-empty author is
+// always resolved when WRAPPER_MEMS_AUTHOR is not set.
 func TestAuthorAttribution_FallbackNonEmpty(t *testing.T) {
-	t.Setenv("WRAPPER_MEMS_AUTHOR", "") // ensure env override is cleared
-	got := authorAttribution()
-	if got == "" {
-		t.Fatal("authorAttribution must return non-empty string")
+	t.Setenv("WRAPPER_MEMS_AUTHOR", "")
+	a := New(Config{}, nil)
+	if a.cfg.Author == "" {
+		t.Fatal("cfg.Author must be non-empty after construction")
 	}
 }
 

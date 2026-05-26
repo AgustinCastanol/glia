@@ -19,12 +19,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"time"
 	"unicode/utf8"
 
 	"github.com/agustincastanol/wrapper-mems/internal/adapter"
+	engramidentity "github.com/agustincastanol/wrapper-mems/internal/identity"
 	"github.com/agustincastanol/wrapper-mems/internal/store"
 )
 
@@ -73,28 +73,29 @@ type observationsPage struct {
 }
 
 // ---------------------------------------------------------------------------
-// authorAttribution (verbatim copy from engram adapter — ADR-8).
+// Config holds the claudemem adapter construction parameters. The wiring
+// helper (cmd/wrapper-mems/cmd/wiring.go) translates *config.Config →
+// claudemem.Config. Adapters never import internal/config (ADR-D3).
 // ---------------------------------------------------------------------------
 
-// authorAttribution returns the value to use for origin.author per REQ-ENG-19:
-//  1. WRAPPER_MEMS_AUTHOR env var if non-empty.
-//  2. USER@hostname (best-effort; uses whichever parts are available).
-func authorAttribution() string {
-	if v := os.Getenv("WRAPPER_MEMS_AUTHOR"); v != "" {
-		return v
-	}
-	user := os.Getenv("USER")
-	host, _ := os.Hostname()
-	switch {
-	case user != "" && host != "":
-		return user + "@" + host
-	case user != "":
-		return user
-	case host != "":
-		return "@" + host
-	default:
-		return "unknown"
-	}
+// Config holds all construction-time parameters for ClaudeMemAdapter.
+type Config struct {
+	// Enabled controls whether this provider is active. The wiring helper
+	// skips disabled providers; New() always builds a functional adapter.
+	Enabled bool
+	// HTTPBaseURL is passed to NewHTTPTransport. Empty triggers auto-resolve
+	// (supervisor.json → fallback 37701).
+	HTTPBaseURL string
+	// WorkerPIDPath is the path to the claude-mem worker PID file.
+	WorkerPIDPath string
+	// ProjectPathMapping maps project names to filesystem paths (for local lookup).
+	ProjectPathMapping map[string]string
+	// ExcludedSessionIDs lists session IDs whose records must never be returned
+	// by ListNative (REQ-PRV-01). Filtering is O(1) via a set built at New().
+	ExcludedSessionIDs []string
+	// Author is pre-resolved from identity.Resolve() by the wiring helper.
+	// If empty, New() resolves it via identity.Resolve("").
+	Author string
 }
 
 // ---------------------------------------------------------------------------
@@ -206,17 +207,39 @@ var _ adapter.Adapter = (*ClaudeMemAdapter)(nil)
 // ClaudeMemAdapter implements adapter.Adapter for the claude-mem memory provider.
 // It is safe for concurrent use after construction.
 type ClaudeMemAdapter struct {
-	transport Transport
+	cfg         Config
+	transport   Transport
+	excludedSet map[string]struct{} // O(1) lookup for ExcludedSessionIDs (REQ-PRV-01)
 }
 
-// New constructs a ClaudeMemAdapter with the given Transport. transport is
-// injected so that unit tests can substitute a fake without running a real
-// daemon. Pass NewHTTPTransport("") for production use.
+// New constructs a ClaudeMemAdapter. transport is injected so that unit tests
+// can substitute a fake without running a real daemon. Pass
+// NewHTTPTransport("") for production use.
+//
+// If cfg.Author is empty, it is resolved via identity.Resolve("") at
+// construction time. The excludedSet is built once from cfg.ExcludedSessionIDs
+// for O(1) lookup in ListNative (ADR-D5, REQ-PRV-01).
 //
 // Construction never fails: a nil transport is accepted and causes I/O methods
 // to return adapter.ErrUnavailable without panicking.
-func New(transport Transport) *ClaudeMemAdapter {
-	return &ClaudeMemAdapter{transport: transport}
+func New(cfg Config, transport Transport) *ClaudeMemAdapter {
+	if cfg.Author == "" {
+		cfg.Author = engramidentity.Resolve("")
+	}
+	excluded := make(map[string]struct{}, len(cfg.ExcludedSessionIDs))
+	for _, id := range cfg.ExcludedSessionIDs {
+		excluded[id] = struct{}{}
+	}
+	return &ClaudeMemAdapter{cfg: cfg, transport: transport, excludedSet: excluded}
+}
+
+// isExcluded reports whether sessionID appears in the exclusion set.
+func (a *ClaudeMemAdapter) isExcluded(sessionID string) bool {
+	if len(a.excludedSet) == 0 {
+		return false
+	}
+	_, ok := a.excludedSet[sessionID]
+	return ok
 }
 
 // Name returns "claude-mem" — the stable provider identifier stored in
@@ -286,6 +309,11 @@ func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since
 			// REQ-CM-07: strict project equality filter on the `project` field
 			// (project name, NOT path — verified 2026-05-20).
 			if rec.Project != project {
+				continue
+			}
+
+			// REQ-PRV-01: excluded sessions return zero records, no error, no log.
+			if a.isExcluded(rec.MemorySessionID) {
 				continue
 			}
 
@@ -456,7 +484,7 @@ func (a *ClaudeMemAdapter) ToCanonical(native adapter.NativeRecord, idmap adapte
 		Origin: store.Origin{
 			Provider:   "claude-mem",
 			ProviderID: rec.nativeIDString(),
-			Author:     authorAttribution(),
+			Author:     a.cfg.Author,
 			SessionID:  rec.MemorySessionID,
 		},
 	}, nil
