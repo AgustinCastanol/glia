@@ -38,13 +38,17 @@ type httpTransport struct {
 	baseURL string
 }
 
-// NewHTTPTransport returns a Transport targeting the local engram HTTP daemon at
-// http://127.0.0.1:7437. The caller's context deadline is forwarded to the HTTP
-// request — no fixed internal timeout is added.
-func NewHTTPTransport() Transport {
+// NewHTTPTransport returns a Transport targeting the engram HTTP daemon at
+// baseURL. If baseURL is empty, the default "http://127.0.0.1:7437" is used.
+// The caller's context deadline is forwarded to the HTTP request — no fixed
+// internal timeout is added.
+func NewHTTPTransport(baseURL string) Transport {
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:7437"
+	}
 	return &httpTransport{
 		client:  &http.Client{},
-		baseURL: "http://127.0.0.1:7437",
+		baseURL: baseURL,
 	}
 }
 

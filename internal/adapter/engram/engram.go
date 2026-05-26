@@ -6,13 +6,35 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/agustincastanol/wrapper-mems/internal/adapter"
+	engramidentity "github.com/agustincastanol/wrapper-mems/internal/identity"
 	"github.com/agustincastanol/wrapper-mems/internal/store"
 )
+
+// Config holds the engram adapter construction parameters. The wiring helper
+// (cmd/wrapper-mems/cmd/wiring.go) translates *config.Config → engram.Config
+// and passes it to New(). Adapters never import internal/config (ADR-D3).
+type Config struct {
+	// Enabled controls whether this provider is active. New() always constructs
+	// a functional adapter; the wiring helper skips disabled providers.
+	Enabled bool
+	// Transport selects the wire protocol: "cli" or "http".
+	Transport string
+	// CLIPath is the engram binary path for the CLI transport.
+	CLIPath string
+	// HTTPBaseURL is the base URL for the HTTP transport.
+	HTTPBaseURL string
+	// Author is pre-resolved from identity.Resolve() by the wiring helper.
+	// If empty, New() resolves it via identity.Resolve("").
+	Author string
+	// Commander is an optional override for the CLI commander. When nil,
+	// New() constructs an execCommander using CLIPath. Set for unit tests
+	// to inject a fake without spawning a real binary.
+	Commander Commander
+}
 
 // EngramRecord is the internal representation of a single engram observation as
 // returned by the engram CLI or HTTP API. All timestamp fields are strings
@@ -75,16 +97,29 @@ func WrapIDMap(inner interface {
 // EngramAdapter implements adapter.Adapter for the engram memory provider.
 // It is safe for concurrent use after construction.
 type EngramAdapter struct {
+	cfg       Config
 	commander Commander
 	transport Transport
 }
 
-// New constructs an EngramAdapter. commander and transport are injected so that
-// unit tests can substitute fakes without spawning a real engram process or daemon.
-// Pass NewExecCommander() and NewHTTPTransport() for production use.
-func New(commander Commander, transport Transport) *EngramAdapter {
+// New constructs an EngramAdapter. transport is injected so that unit tests
+// can substitute a fake without running a real daemon. The commander is taken
+// from cfg.Commander when set (for tests); otherwise it is built from
+// cfg.CLIPath via NewExecCommander.
+//
+// If cfg.Author is empty, it is resolved via identity.Resolve("") at
+// construction time so all canonical records share a consistent author.
+func New(cfg Config, transport Transport) *EngramAdapter {
+	if cfg.Author == "" {
+		cfg.Author = engramidentity.Resolve("")
+	}
+	cmd := cfg.Commander
+	if cmd == nil {
+		cmd = NewExecCommander(cfg.CLIPath)
+	}
 	return &EngramAdapter{
-		commander: commander,
+		cfg:       cfg,
+		commander: cmd,
 		transport: transport,
 	}
 }
@@ -92,27 +127,6 @@ func New(commander Commander, transport Transport) *EngramAdapter {
 // Name returns "engram" — the stable provider identifier stored in origin.provider.
 func (a *EngramAdapter) Name() string {
 	return "engram"
-}
-
-// authorAttribution returns the value to use for origin.author per REQ-ENG-19:
-//  1. WRAPPER_MEMS_AUTHOR env var if non-empty.
-//  2. USER@hostname (best-effort; uses whichever parts are available).
-func authorAttribution() string {
-	if v := os.Getenv("WRAPPER_MEMS_AUTHOR"); v != "" {
-		return v
-	}
-	user := os.Getenv("USER")
-	host, _ := os.Hostname()
-	switch {
-	case user != "" && host != "":
-		return user + "@" + host
-	case user != "":
-		return user
-	case host != "":
-		return "@" + host
-	default:
-		return "unknown"
-	}
 }
 
 // rfc3339NanoFixed is an explicit 9-digit nanosecond format with UTC Z suffix.
@@ -395,7 +409,7 @@ func (a *EngramAdapter) ToCanonical(native adapter.NativeRecord, idmap adapter.I
 		Origin: store.Origin{
 			Provider:   "engram",
 			ProviderID: rec.ID,
-			Author:     authorAttribution(),
+			Author:     a.cfg.Author,
 			SessionID:  rec.SessionID,
 		},
 		// SchemaVersion: NOT set — store.Append owns this (REQ-ENG-16 table).

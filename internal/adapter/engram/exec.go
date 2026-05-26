@@ -18,16 +18,24 @@ type Commander interface {
 }
 
 // execCommander is the production Commander backed by exec.CommandContext.
-type execCommander struct{}
-
-// NewExecCommander returns a Commander that shells out to the engram binary on PATH.
-func NewExecCommander() Commander {
-	return &execCommander{}
+type execCommander struct {
+	// cliPath is the binary name or absolute path of the engram executable.
+	cliPath string
 }
 
-// Run executes "engram <args>" under ctx and captures stdout/stderr.
+// NewExecCommander returns a Commander that shells out to the engram binary at
+// cliPath. If cliPath is empty, the binary name "engram" is used (PATH lookup).
+// The wiring helper passes cfg.Providers.Engram.CLIPath here.
+func NewExecCommander(cliPath string) Commander {
+	if cliPath == "" {
+		cliPath = "engram"
+	}
+	return &execCommander{cliPath: cliPath}
+}
+
+// Run executes "<cliPath> <args>" under ctx and captures stdout/stderr.
 func (e *execCommander) Run(ctx context.Context, args ...string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, "engram", args...)
+	cmd := exec.CommandContext(ctx, e.cliPath, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
