@@ -39,7 +39,7 @@ func runCommandExec(name string, args []string) ([]byte, error) {
 	return runCommand(name, args...)
 }
 
-// syncCmd returns a tea.Cmd that runs `wrapper-mems --dir <dir> <args...>` as a
+// syncCmd returns a tea.Cmd that runs `glia --dir <dir> <args...>` as a
 // subprocess, captures its combined stdout/stderr, and emits syncDoneMsg when
 // the subprocess exits. The spinner ticks while this Cmd runs on Bubble Tea's
 // off-UI goroutine. (REQ-TUI-10)

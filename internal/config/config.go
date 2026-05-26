@@ -1,4 +1,4 @@
-// Package config provides deterministic runtime configuration for wrapper-mems.
+// Package config provides deterministic runtime configuration for glia.
 // It implements a four-layer merge: defaults → project file → user file → env vars.
 // Adapters receive their sub-config by value at construction time; this package
 // is never imported by adapter packages (no import cycle — see design ADR-D3).

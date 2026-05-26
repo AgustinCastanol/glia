@@ -1,4 +1,4 @@
-// Package e2e runs end-to-end tests that exec the compiled wrapper-mems binary
+// Package e2e runs end-to-end tests that exec the compiled glia binary
 // against a real temporary store. These cover REQ-INIT-*, REQ-CFG-04 version
 // refusal, and the init→sync→status→doctor happy path.
 //
@@ -21,14 +21,14 @@ import (
 var binaryPath string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "wrapper-mems-e2e-*")
+	tmp, err := os.MkdirTemp("", "glia-e2e-*")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e: mkdir tmp:", err)
 		os.Exit(2)
 	}
 	defer os.RemoveAll(tmp)
 
-	name := "wrapper-mems"
+	name := "glia"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -40,12 +40,12 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 
-	build := exec.Command("go", "build", "-o", binaryPath, "./cmd/wrapper-mems")
+	build := exec.Command("go", "build", "-o", binaryPath, "./cmd/glia")
 	build.Dir = repoRoot
 	build.Stderr = os.Stderr
 	build.Stdout = os.Stderr
 	if err := build.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "e2e: build wrapper-mems:", err)
+		fmt.Fprintln(os.Stderr, "e2e: build glia:", err)
 		os.Exit(2)
 	}
 
@@ -105,7 +105,7 @@ func TestE2E_VersionPrints(t *testing.T) {
 	if r.exitCode != 0 {
 		t.Fatalf("version exit=%d stderr=%s", r.exitCode, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "wrapper-mems") || !strings.Contains(r.stdout, "schema") {
+	if !strings.Contains(r.stdout, "glia") || !strings.Contains(r.stdout, "schema") {
 		t.Errorf("unexpected version output: %q", r.stdout)
 	}
 }
@@ -120,9 +120,9 @@ func TestE2E_InitCreatesStore(t *testing.T) {
 	}
 
 	wantFiles := []string{
-		".wrapper-mems/config.yaml",
-		".wrapper-mems/schema.json",
-		".wrapper-mems/memory.jsonl",
+		".glia/config.yaml",
+		".glia/schema.json",
+		".glia/memory.jsonl",
 		".gitignore",
 	}
 	for _, f := range wantFiles {
@@ -202,13 +202,13 @@ func TestE2E_DoctorFixThenPasses(t *testing.T) {
 }
 
 // TestE2E_SyncRefusesWhenBinaryTooOld verifies REQ-CFG-04: if schema.json's
-// wrapper_mems_min_version exceeds the binary version, sync refuses.
+// glia_min_version exceeds the binary version, sync refuses.
 //
 // The shipped binary is "dev" which CompareVersion treats as infinite, so we
 // cannot trigger refusal via the real binary in this test environment. Instead
 // we assert the negative path: write a high min_version and confirm dev still
 // passes (documenting the dev escape hatch). The unit tests in
-// cmd/wrapper-mems/cmd/version_test.go cover the refusal path with a settable
+// cmd/glia/cmd/version_test.go cover the refusal path with a settable
 // Version variable.
 func TestE2E_SyncDevBinarySatisfiesAnyMinVersion(t *testing.T) {
 	dir := initFreshStore(t)
@@ -224,7 +224,7 @@ func TestE2E_SyncDevBinarySatisfiesAnyMinVersion(t *testing.T) {
 // surfaced as an error by the version-refusal guard (not silently permissive).
 func TestE2E_StatusRefusesOnCorruptSchema(t *testing.T) {
 	dir := initFreshStore(t)
-	path := filepath.Join(dir, ".wrapper-mems", "schema.json")
+	path := filepath.Join(dir, ".glia", "schema.json")
 	if err := os.WriteFile(path, []byte(`{not valid json`), 0o644); err != nil {
 		t.Fatalf("corrupt schema.json: %v", err)
 	}
@@ -246,10 +246,10 @@ func initFreshStore(t *testing.T) string {
 	return dir
 }
 
-// bumpMinVersion rewrites schema.json setting wrapper_mems_min_version=v.
+// bumpMinVersion rewrites schema.json setting glia_min_version=v.
 func bumpMinVersion(t *testing.T, dir, v string) {
 	t.Helper()
-	path := filepath.Join(dir, ".wrapper-mems", "schema.json")
+	path := filepath.Join(dir, ".glia", "schema.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read schema.json: %v", err)
@@ -258,7 +258,7 @@ func bumpMinVersion(t *testing.T, dir, v string) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatalf("parse schema.json: %v", err)
 	}
-	m["wrapper_mems_min_version"] = v
+	m["glia_min_version"] = v
 	out, err := json.Marshal(m)
 	if err != nil {
 		t.Fatalf("marshal schema.json: %v", err)

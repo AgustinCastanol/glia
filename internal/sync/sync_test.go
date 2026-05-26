@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // bidiFakeAdapter supports both push (ListNative/ReadNative/ToCanonical) and
@@ -61,7 +61,7 @@ func (f *bidiFakeAdapter) WriteNative(_ context.Context, rec adapter.NativeRecor
 func openSyncStore(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := store.Open(filepath.Join(dir, ".wrapper-mems"))
+	s, err := store.Open(filepath.Join(dir, ".glia"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

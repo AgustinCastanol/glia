@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // Options controls the behaviour of a single sync run.
@@ -32,7 +32,7 @@ type Options struct {
 	// independently of config.yaml (REQ-SE-10).
 	MirrorEngram bool
 
-	// Commit, when true, runs `git add .wrapper-mems/ && git commit` after a
+	// Commit, when true, runs `git add .glia/ && git commit` after a
 	// successful non-dry-run sync (REQ-SE-11).
 	Commit bool
 
@@ -175,7 +175,7 @@ func (e *Engine) Pull(ctx context.Context) (*RunReport, error) {
 
 // Sync runs Pull then Push, with optional mirror-engram shell-outs (§6.3 /
 // REQ-SE-07, REQ-SE-31, REQ-SE-40). After a non-dry-run success, if
-// opts.Commit is set, stages and commits the .wrapper-mems/ directory
+// opts.Commit is set, stages and commits the .glia/ directory
 // (REQ-SE-11).
 func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
 	if e.mirrorEngramEnabled() {
@@ -224,7 +224,7 @@ func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
 	return merged, nil
 }
 
-// gitCommit runs `git add .wrapper-mems/ && git commit -m "chore: sync [timestamp]"`
+// gitCommit runs `git add .glia/ && git commit -m "chore: sync [timestamp]"`
 // in the store's parent directory. Failures are warnings, never hard errors (REQ-SE-11).
 func (e *Engine) gitCommit() {
 	storeParent := e.store.RootDir()
@@ -236,7 +236,7 @@ func (e *Engine) gitCommit() {
 	ts := time.Now().UTC().Format(time.RFC3339)
 	msg := fmt.Sprintf("chore: sync [%s]", ts)
 
-	addCmd := exec.Command("git", "-C", storeParent, "add", ".wrapper-mems/")
+	addCmd := exec.Command("git", "-C", storeParent, "add", ".glia/")
 	var addErr bytes.Buffer
 	addCmd.Stderr = &addErr
 	if err := addCmd.Run(); err != nil {

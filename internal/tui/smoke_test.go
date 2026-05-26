@@ -29,10 +29,10 @@ func TestSmoke_TabNavAndQuit(t *testing.T) {
 		teatest.WithInitialTermSize(80, 24),
 	)
 
-	// Wait for the header bar containing "wrapper-mems" to appear in the output.
+	// Wait for the header bar containing "glia" to appear in the output.
 	teatest.WaitFor(t, tm.Output(),
 		func(out []byte) bool {
-			return bytes.Contains(out, []byte("wrapper-mems"))
+			return bytes.Contains(out, []byte("glia"))
 		},
 		teatest.WithDuration(3*time.Second),
 		teatest.WithCheckInterval(50*time.Millisecond),

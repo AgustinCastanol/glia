@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // pushFakeAdapter is a richer fake used specifically for push tests.
@@ -73,7 +73,7 @@ func (f *pushFakeAdapter) WriteNative(_ context.Context, _ adapter.NativeRecord)
 func openPushStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	s, err := store.Open(storeDir)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)

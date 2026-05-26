@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // statusDataMsg carries the result of calling callStatusJSON + store.Stats.
@@ -107,7 +107,7 @@ func (m *statusModel) View() string {
 	projectName := filepath.Base(m.dir)
 	sb.WriteString(boldText.Render("Project: ") + projectName + "\n")
 	sb.WriteString(boldText.Render("Path:    ") + m.dir + "\n")
-	canonPath := filepath.Join(m.dir, ".wrapper-mems")
+	canonPath := filepath.Join(m.dir, ".glia")
 	sb.WriteString(boldText.Render("Store:   ") + canonPath + "\n")
 	sb.WriteString("\n")
 
@@ -185,7 +185,7 @@ func osArgs0() string {
 	if len(os.Args) > 0 {
 		return os.Args[0]
 	}
-	return "wrapper-mems"
+	return "glia"
 }
 
 // glyphFor returns a styled health glyph for a provider health string.

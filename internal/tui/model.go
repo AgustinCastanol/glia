@@ -253,7 +253,7 @@ func (m Model) View() string {
 
 // renderHeader returns the full-width header bar.
 func (m Model) renderHeader() string {
-	title := "wrapper-mems"
+	title := "glia"
 	hint := "q quit"
 	gap := m.w - lipgloss.Width(title) - lipgloss.Width(hint) - 2
 	if gap < 1 {

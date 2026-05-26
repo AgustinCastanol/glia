@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
+	enginesync "github.com/agustincastanol/glia/internal/sync"
 )
 
 var resolveFlags struct {

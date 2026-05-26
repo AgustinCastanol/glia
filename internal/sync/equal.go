@@ -3,7 +3,7 @@ package sync
 import (
 	"sort"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // recordsEqualIgnoringMetadata reports whether a and b carry identical payload

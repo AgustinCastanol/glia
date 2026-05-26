@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
-// seedStore initialises a store at dir/.wrapper-mems and appends records.
+// seedStore initialises a store at dir/.glia and appends records.
 // Returns the store path.
 func seedStore(t *testing.T, dir string, records []store.CanonicalRecord) string {
 	t.Helper()
-	sp := filepath.Join(dir, ".wrapper-mems")
+	sp := filepath.Join(dir, ".glia")
 	s, err := store.Open(sp)
 	if err != nil {
 		t.Fatalf("seedStore: open: %v", err)
@@ -188,10 +188,10 @@ func TestShow_TitleTruncatedAt60(t *testing.T) {
 func TestShow_NoStoreExits(t *testing.T) {
 	// Verify that show exits non-zero when no store exists.
 	// We can't capture os.Exit directly; instead verify requireStore returns error.
-	dir := t.TempDir() // no .wrapper-mems inside
-	_, err := os.Stat(filepath.Join(dir, ".wrapper-mems"))
+	dir := t.TempDir() // no .glia inside
+	_, err := os.Stat(filepath.Join(dir, ".glia"))
 	if !os.IsNotExist(err) {
-		t.Skip("unexpected .wrapper-mems present")
+		t.Skip("unexpected .glia present")
 	}
 	// requireStore should return errNoStore.
 	rootFlags.dir = dir

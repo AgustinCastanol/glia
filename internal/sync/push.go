@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // providerIDMapAdapter wraps *store.ProviderIDMapSnapshot to satisfy adapter.IDMap.

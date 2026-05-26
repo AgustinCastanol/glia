@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // seedConflict creates a store with one record and injects a ConflictEntry
@@ -16,7 +16,7 @@ import (
 // It returns the store path and the canonical_id that is in conflict.
 func seedConflict(t *testing.T, dir string) (sp string, canonicalID string) {
 	t.Helper()
-	sp = filepath.Join(dir, ".wrapper-mems")
+	sp = filepath.Join(dir, ".glia")
 	s, err := store.Open(sp)
 	if err != nil {
 		t.Fatalf("seedConflict: open: %v", err)
@@ -95,7 +95,7 @@ func TestResolve_ValidDupIndex(t *testing.T) {
 	}
 
 	// Conflict must be gone from the store.
-	sp := filepath.Join(dir, ".wrapper-mems")
+	sp := filepath.Join(dir, ".glia")
 	s, err := store.Open(sp)
 	if err != nil {
 		t.Fatalf("re-open store: %v", err)
@@ -143,7 +143,7 @@ func TestResolve_NoConflict(t *testing.T) {
 // TestResolve_NoStore checks that resolve fails with errNoStore when the
 // store directory does not exist (REQ-SE-05).
 func TestResolve_NoStore(t *testing.T) {
-	dir := t.TempDir() // no .wrapper-mems inside
+	dir := t.TempDir() // no .glia inside
 	_, err := executeResolve(t, dir, "any-id", 1)
 	if err == nil {
 		t.Fatal("expected errNoStore, got nil")

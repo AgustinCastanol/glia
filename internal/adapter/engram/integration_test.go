@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter/engram"
+	"github.com/agustincastanol/glia/internal/adapter/engram"
 )
 
 // skipIfNoBinary skips the test when engram is not on PATH or testing.Short is set.
@@ -99,7 +99,7 @@ func TestIntegration_ListNative_ReturnsIDs(t *testing.T) {
 	skipIfNoBinary(t)
 	skipIfDaemonDown(t)
 
-	const project = "wrapper-mems"
+	const project = "glia"
 
 	a := realAdapter()
 	ids, err := a.ListNative(context.Background(), project, time.Time{})
@@ -120,7 +120,7 @@ func TestIntegration_ListNative_SinceFilter(t *testing.T) {
 	skipIfNoBinary(t)
 	skipIfDaemonDown(t)
 
-	const project = "wrapper-mems"
+	const project = "glia"
 
 	// Far-future since: nothing should be updated after 2099.
 	future := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -144,7 +144,7 @@ func TestIntegration_ListNative_PersonalScopeExcluded(t *testing.T) {
 	skipIfNoBinary(t)
 	skipIfDaemonDown(t)
 
-	const project = "wrapper-mems"
+	const project = "glia"
 
 	a := realAdapter()
 	ids, err := a.ListNative(context.Background(), project, time.Time{})

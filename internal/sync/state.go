@@ -3,7 +3,7 @@ package sync
 import (
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // readWatermark returns the last-pushed-at watermark for provider.

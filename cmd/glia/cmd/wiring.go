@@ -3,11 +3,11 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/adapter/claudemem"
-	"github.com/agustincastanol/wrapper-mems/internal/adapter/engram"
-	"github.com/agustincastanol/wrapper-mems/internal/config"
-	"github.com/agustincastanol/wrapper-mems/internal/identity"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/adapter/claudemem"
+	"github.com/agustincastanol/glia/internal/adapter/engram"
+	"github.com/agustincastanol/glia/internal/config"
+	"github.com/agustincastanol/glia/internal/identity"
 )
 
 // buildAdapters constructs configured adapters from a loaded *config.Config.

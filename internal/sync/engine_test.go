@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // fakeAdapter is a minimal adapter.Adapter implementation for testing.
@@ -77,7 +77,7 @@ func (f *fakeAdapter) SupportedKinds() []string { return nil }
 func openTestStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	s, err := store.Open(storeDir)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)

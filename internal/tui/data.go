@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // IndexSnapshot holds the index.json fields the TUI needs directly.
@@ -17,7 +17,7 @@ type IndexSnapshot struct {
 	SyncState map[string]store.ProviderSyncState `json:"sync_state"`
 }
 
-// StatusJSON is the machine-readable payload emitted by `wrapper-mems status --json`.
+// StatusJSON is the machine-readable payload emitted by `glia status --json`.
 // It mirrors cmd.statusJSON (unexported there) — defined here for the data layer.
 type StatusJSON struct {
 	ProviderHealth map[string]string              `json:"provider_health"`
@@ -208,7 +208,7 @@ func loadIndexFile(storeDir string) (*IndexSnapshot, error) {
 }
 
 // callStatusJSON shells out `<binary> --dir <dir> status --json` and unmarshals
-// the response. The binary defaults to os.Args[0] (the running wrapper-mems
+// the response. The binary defaults to os.Args[0] (the running glia
 // process) so the TUI always calls the same version it was launched from.
 //
 // Tests MUST inject a fake runner via dataLayer.runner — calling the test

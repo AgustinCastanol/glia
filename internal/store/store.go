@@ -590,7 +590,7 @@ func (s *Store) ProviderIDMap(provider string) *ProviderIDMapSnapshot {
 	return &ProviderIDMapSnapshot{forward: snapshot}
 }
 
-// RootDir returns the absolute path of the store directory (e.g. .wrapper-mems/).
+// RootDir returns the absolute path of the store directory (e.g. .glia/).
 // Used by the Engine's git-commit helper to locate the working tree root.
 func (s *Store) RootDir() string {
 	s.mu.RLock()

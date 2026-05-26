@@ -29,7 +29,7 @@ func openAndPopulate(t *testing.T, dir string, records []CanonicalRecord) {
 // and SchemaVersion from a freshly-populated store directory.
 func TestStats_AllThreeFields(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 
 	records := []CanonicalRecord{
 		{Kind: "observation", Title: "alpha", Type: "note", ContentFormat: "markdown"},
@@ -57,7 +57,7 @@ func TestStats_AllThreeFields(t *testing.T) {
 // updated FileSizeBytes (REQ-TUI-03 scenario: stats after append).
 func TestStats_ReflectsAppend(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 
 	openAndPopulate(t, storeDir, []CanonicalRecord{
 		{Kind: "observation", Title: "first", Type: "note", ContentFormat: "markdown"},
@@ -90,7 +90,7 @@ func TestStats_ReflectsAppend(t *testing.T) {
 // does not exist yet (empty store bootstrap case).
 func TestStats_MissingMemoryFile(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 
 	// Create the store (which bootstraps index.json + schema.json) then
 	// immediately delete memory.jsonl to simulate a bare-index scenario.

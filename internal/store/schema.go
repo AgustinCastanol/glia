@@ -15,11 +15,11 @@ const StoreSupportedVersion = 1
 type schemaFile struct {
 	SchemaVersion         int    `json:"schema_version"`
 	CreatedAt             string `json:"created_at"`
-	// WrapperMemsMinVersion is the minimum binary version required to operate on
+	// GliaMinVersion is the minimum binary version required to operate on
 	// this store. An empty or absent value means any version is accepted
 	// (permissive default — D6). Commands that read a store call
-	// config.Refuse(Version, WrapperMemsMinVersion) before any I/O.
-	WrapperMemsMinVersion string `json:"wrapper_mems_min_version,omitempty" yaml:"wrapper_mems_min_version,omitempty"`
+	// config.Refuse(Version, GliaMinVersion) before any I/O.
+	GliaMinVersion string `json:"glia_min_version,omitempty" yaml:"glia_min_version,omitempty"`
 }
 
 // SchemaInfo is the public representation of schema.json fields exposed to
@@ -27,12 +27,12 @@ type schemaFile struct {
 type SchemaInfo struct {
 	SchemaVersion         int    `json:"schema_version"`
 	CreatedAt             string `json:"created_at"`
-	WrapperMemsMinVersion string `json:"wrapper_mems_min_version,omitempty"`
+	GliaMinVersion string `json:"glia_min_version,omitempty"`
 }
 
 // ReadSchema reads schema.json from storeDir and returns its public fields.
 // Returns an error if the file is missing or malformed. Commands use this to
-// obtain WrapperMemsMinVersion for the version-refusal guard (REQ-CFG-04).
+// obtain GliaMinVersion for the version-refusal guard (REQ-CFG-04).
 func ReadSchema(storeDir string) (SchemaInfo, error) {
 	data, err := os.ReadFile(filepath.Join(storeDir, "schema.json"))
 	if err != nil {
@@ -45,7 +45,7 @@ func ReadSchema(storeDir string) (SchemaInfo, error) {
 	return SchemaInfo{
 		SchemaVersion:         sf.SchemaVersion,
 		CreatedAt:             sf.CreatedAt,
-		WrapperMemsMinVersion: sf.WrapperMemsMinVersion,
+		GliaMinVersion: sf.GliaMinVersion,
 	}, nil
 }
 

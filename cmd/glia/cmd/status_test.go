@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
-	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
+	"github.com/agustincastanol/glia/internal/store"
+	enginesync "github.com/agustincastanol/glia/internal/sync"
 )
 
 // executeStatus runs the status command (runStatus) with the given dir and
@@ -154,7 +154,7 @@ func TestSyncExitErr_ConflictsPresentReturnsErrConflicts(t *testing.T) {
 	_, canonicalID := seedConflict(t, dir)
 	_ = canonicalID
 
-	sp := dir + "/.wrapper-mems"
+	sp := dir + "/.glia"
 	s, err := store.Open(sp)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -178,7 +178,7 @@ func TestSyncExitErr_NoConflictsReturnsNil(t *testing.T) {
 		{Kind: "observation", Title: "clean", Type: "note"},
 	})
 
-	sp := dir + "/.wrapper-mems"
+	sp := dir + "/.glia"
 	s, err := store.Open(sp)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -199,7 +199,7 @@ func TestEngineStatus_ConflictsSurfaced(t *testing.T) {
 	dir := t.TempDir()
 	_, canonicalID := seedConflict(t, dir)
 
-	sp := dir + "/.wrapper-mems"
+	sp := dir + "/.glia"
 	s, err := store.Open(sp)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -228,11 +228,11 @@ func TestEngineStatus_ConflictsSurfaced(t *testing.T) {
 
 // --- --json flag tests (T-04) ---
 
-// openStoreForTest opens the store at dir/.wrapper-mems and returns it.
+// openStoreForTest opens the store at dir/.glia and returns it.
 // The caller must defer s.Close().
 func openStoreForTest(t *testing.T, dir string) *store.Store {
 	t.Helper()
-	sp := filepath.Join(dir, ".wrapper-mems")
+	sp := filepath.Join(dir, ".glia")
 	s, err := store.Open(sp)
 	if err != nil {
 		t.Fatalf("openStoreForTest: %v", err)
