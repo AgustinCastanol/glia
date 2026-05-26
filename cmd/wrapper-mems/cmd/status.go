@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/agustincastanol/wrapper-mems/internal/adapter"
+	"github.com/agustincastanol/wrapper-mems/internal/config"
 	"github.com/agustincastanol/wrapper-mems/internal/store"
 	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
 )
@@ -78,9 +80,24 @@ func runStatus(cmd *cobra.Command, _ []string) {
 		fmt.Fprintln(os.Stderr, "status: load config:", cfgErr)
 	}
 
-	// Build a zero-adapter engine — Status only needs Health checks and the
-	// conflict list from the store. Adapters are wired in PR-D.
-	engine := enginesync.New(s, nil, cfg, enginesync.Options{}, os.Stderr)
+	// Load full config for adapter wiring (REQ-DOC-01 D3: real adapters required
+	// so provider_health reflects actual reachability, not always nil).
+	loadedConfig, lcErr := config.Load(dir, "")
+	if lcErr != nil {
+		// Non-fatal: fall back to nil adapters so status still shows store state.
+		fmt.Fprintln(os.Stderr, "status: load config (adapters):", lcErr)
+	}
+
+	var adapters map[string]adapter.Adapter
+	if lcErr == nil {
+		var aErr error
+		adapters, aErr = buildAdapters(loadedConfig)
+		if aErr != nil {
+			fmt.Fprintln(os.Stderr, "status: build adapters:", aErr)
+		}
+	}
+
+	engine := enginesync.New(s, adapters, cfg, enginesync.Options{}, os.Stderr)
 
 	report, err := engine.Status(context.Background())
 	if err != nil {
