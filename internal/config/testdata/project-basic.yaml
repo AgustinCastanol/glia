@@ -1,0 +1,7 @@
+schema_version: 1
+project: my-project
+providers:
+  engram:
+    enabled: true
+    transport: cli
+    cli_path: engram-dev
