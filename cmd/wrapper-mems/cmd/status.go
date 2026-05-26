@@ -15,6 +15,7 @@ import (
 	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
 )
 
+
 var statusFlags struct {
 	conflicts bool
 	json      bool
@@ -74,22 +75,18 @@ func runStatus(cmd *cobra.Command, _ []string) {
 	}
 	defer s.Close()
 
-	sp := storePath(dir)
-	cfg, cfgErr := enginesync.Load(configPath(sp))
-	if cfgErr != nil {
-		fmt.Fprintln(os.Stderr, "status: load config:", cfgErr)
-	}
-
-	// Load full config for adapter wiring (REQ-DOC-01 D3: real adapters required
-	// so provider_health reflects actual reachability, not always nil).
+	// Load full config once for both adapter wiring and engine config (T-3.7: removes
+	// the redundant legacy enginesync.Load() call — WARNING-03 from PR-A verify-report).
 	loadedConfig, lcErr := config.Load(dir, "")
 	if lcErr != nil {
 		// Non-fatal: fall back to nil adapters so status still shows store state.
-		fmt.Fprintln(os.Stderr, "status: load config (adapters):", lcErr)
+		fmt.Fprintln(os.Stderr, "status: load config:", lcErr)
 	}
 
 	var adapters map[string]adapter.Adapter
+	cfg := enginesync.Default()
 	if lcErr == nil {
+		cfg = toEngineConfig(loadedConfig)
 		var aErr error
 		adapters, aErr = buildAdapters(loadedConfig)
 		if aErr != nil {
