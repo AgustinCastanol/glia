@@ -4,11 +4,17 @@
 /bin/
 /dist/
 
-# wrapper-mems local cache (per PRD-0: index.json is gitignored, memory.jsonl is committed)
-.wrapper-mems/index.json
+# glia local cache (per PRD-0: index.json is gitignored, memory.jsonl is committed)
+.glia/index.json
 
 # OS / editor
 .DS_Store
 
 # Agent Teams Lite local state
 .atl/
+
+# Local agent / editor state (not for sharing)
+.antigravitycli/
+
+# Local doc drafts (kept out of repo until promoted)
+/docs/
