@@ -7,9 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/adapter/claudemem"
-	"github.com/agustincastanol/wrapper-mems/internal/adapter/engram"
+	"github.com/agustincastanol/wrapper-mems/internal/config"
 	"github.com/agustincastanol/wrapper-mems/internal/store"
 	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
 )
@@ -149,11 +147,16 @@ func init() {
 }
 
 // buildSyncEngine wires adapters and constructs the Engine for this run.
+// Loads the full PRD-5 config (project → user → env), builds adapters via the
+// shared wiring helper (D3), and translates SyncConfig into enginesync.Config
+// via toEngineConfig() so the engine package stays unchanged.
 func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
-	cfg, err := enginesync.Load(configPath(storePath(dir)))
+	loadedConfig, err := config.Load(dir, "")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+
+	cfg := toEngineConfig(loadedConfig)
 
 	opts := enginesync.Options{
 		DryRun:         syncFlags.dryRun,
@@ -172,15 +175,27 @@ func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
 		opts.MirrorEngram = true
 	}
 
-	// Build adapter map. In v1, adapters are hard-wired; a registry is future work.
-	// TODO(T-1.12): replace with buildAdapters(loadedConfig) once wiring helper exists.
-	adapters := map[string]adapter.Adapter{
-		"engram": engram.New(engram.Config{CLIPath: "engram", HTTPBaseURL: "http://127.0.0.1:7437"},
-			engram.NewHTTPTransport("http://127.0.0.1:7437")),
-		"claude-mem": claudemem.New(claudemem.Config{}, claudemem.NewHTTPTransport("")),
+	adapters, err := buildAdapters(loadedConfig)
+	if err != nil {
+		return nil, fmt.Errorf("build adapters: %w", err)
 	}
 
 	return enginesync.New(s, adapters, cfg, opts, os.Stderr), nil
+}
+
+// toEngineConfig translates the PRD-5 typed config into the legacy
+// enginesync.Config shape consumed by internal/sync. Kept as a shim so the
+// engine package remains unchanged at the PR-A slice (D5).
+func toEngineConfig(c *config.Config) enginesync.Config {
+	out := enginesync.Default()
+	out.MirrorEngram = c.Sync.MirrorEngram
+	if c.Sync.MirrorTimeoutSeconds > 0 {
+		out.MirrorTimeoutSeconds = c.Sync.MirrorTimeoutSeconds
+	}
+	if len(c.Sync.Providers) > 0 {
+		out.Providers = c.Sync.Providers
+	}
+	return out
 }
 
 // syncExitErr maps a RunReport to an exit-code sentinel error (D6 / REQ-SE-51).
