@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -71,6 +73,101 @@ func TestVersion_LdflagsInjected(t *testing.T) {
 func TestVersion_SchemaVersionRange(t *testing.T) {
 	if SchemaVersionRange != "v1" {
 		t.Errorf("SchemaVersionRange = %q, want %q", SchemaVersionRange, "v1")
+	}
+}
+
+// TestEnforceMinVersion_MissingSchemaIsPermissive verifies that a store with no
+// schema.json does not trigger version refusal (REQ-CFG-04).
+func TestEnforceMinVersion_MissingSchemaIsPermissive(t *testing.T) {
+	dir := t.TempDir()
+	if err := enforceMinVersion(dir); err != nil {
+		t.Fatalf("expected nil for missing schema.json, got: %v", err)
+	}
+}
+
+// TestEnforceMinVersion_EmptyMinIsPermissive verifies that a schema.json without
+// wrapper_mems_min_version is permissive (REQ-CFG-04 / config.Refuse).
+func TestEnforceMinVersion_EmptyMinIsPermissive(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z"}`)
+
+	orig := Version
+	Version = "v0.1.0"
+	t.Cleanup(func() { Version = orig })
+
+	if err := enforceMinVersion(dir); err != nil {
+		t.Fatalf("expected nil for empty min_version, got: %v", err)
+	}
+}
+
+// TestEnforceMinVersion_BinaryTooOldRefuses verifies that wrapper_mems_min_version
+// greater than the binary Version produces a refusal error (REQ-CFG-04).
+func TestEnforceMinVersion_BinaryTooOldRefuses(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","wrapper_mems_min_version":"v2.0.0"}`)
+
+	orig := Version
+	Version = "v0.5.0"
+	t.Cleanup(func() { Version = orig })
+
+	err := enforceMinVersion(dir)
+	if err == nil {
+		t.Fatal("expected refusal error, got nil")
+	}
+	if !strings.Contains(err.Error(), "v2.0.0") {
+		t.Errorf("expected error to mention required version v2.0.0, got: %v", err)
+	}
+}
+
+// TestEnforceMinVersion_BinaryAtOrAboveOK verifies that binary >= min_version
+// does not refuse (REQ-CFG-04).
+func TestEnforceMinVersion_BinaryAtOrAboveOK(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","wrapper_mems_min_version":"v0.1.0"}`)
+
+	orig := Version
+	Version = "v0.1.0"
+	t.Cleanup(func() { Version = orig })
+
+	if err := enforceMinVersion(dir); err != nil {
+		t.Fatalf("expected nil for binary >= min_version, got: %v", err)
+	}
+}
+
+// TestEnforceMinVersion_DevSatisfiesAnyMin verifies that a "dev" binary is
+// treated as infinitely high and satisfies any min_version (config.CompareVersion contract).
+func TestEnforceMinVersion_DevSatisfiesAnyMin(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","wrapper_mems_min_version":"v99.0.0"}`)
+
+	orig := Version
+	Version = "dev"
+	t.Cleanup(func() { Version = orig })
+
+	if err := enforceMinVersion(dir); err != nil {
+		t.Fatalf("expected dev to satisfy any min_version, got: %v", err)
+	}
+}
+
+// TestEnforceMinVersion_CorruptSchemaSurfacesError verifies that an unreadable or
+// malformed schema.json surfaces the error rather than being silently permissive.
+func TestEnforceMinVersion_CorruptSchemaSurfacesError(t *testing.T) {
+	dir := t.TempDir()
+	writeSchema(t, dir, `{not valid json`)
+
+	err := enforceMinVersion(dir)
+	if err == nil {
+		t.Fatal("expected error for corrupt schema.json, got nil")
+	}
+	if !strings.Contains(err.Error(), "read schema") {
+		t.Errorf("expected error to wrap 'read schema', got: %v", err)
+	}
+}
+
+func writeSchema(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "schema.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write schema.json: %v", err)
 	}
 }
 

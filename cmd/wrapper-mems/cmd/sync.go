@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -151,6 +152,10 @@ func init() {
 // shared wiring helper (D3), and translates SyncConfig into enginesync.Config
 // via toEngineConfig() so the engine package stays unchanged.
 func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
+	if err := enforceMinVersion(filepath.Join(dir, ".wrapper-mems")); err != nil {
+		return nil, err
+	}
+
 	loadedConfig, err := config.Load(dir, "")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
