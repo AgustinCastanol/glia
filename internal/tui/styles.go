@@ -1,4 +1,4 @@
-// Package tui implements the Bubble Tea terminal dashboard for wrapper-mems.
+// Package tui implements the Bubble Tea terminal dashboard for glia.
 package tui
 
 import "github.com/charmbracelet/lipgloss"

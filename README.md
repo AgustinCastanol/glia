@@ -1,4 +1,4 @@
-# wrapper-mems
+# glia
 
 A **memory broker** that lets a team share a single project memory across heterogeneous AI memory providers (engram, claude-mem, …). The source of truth lives in the project's git repo as a provider-agnostic **JSONL** canonical store — not in any provider's native format.
 
@@ -34,7 +34,7 @@ The store MUST NOT import the adapter layer.
 ## Project Structure
 
 ```
-wrapper-mems/
+glia/
 ├── cmd/
 │   └── debug-store/          # Internal smoke-testing CLI (not user-facing)
 │       └── main.go

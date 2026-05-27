@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
+	"github.com/agustincastanol/glia/internal/adapter"
 )
 
 // Transport abstracts the HTTP calls to the engram daemon so that unit tests

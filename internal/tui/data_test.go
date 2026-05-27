@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // writeJSONL writes a JSONL file from a slice of any values (one per line).
@@ -42,7 +42,7 @@ func makeRecord(id string, rev int, deleted bool) store.CanonicalRecord {
 
 func TestLoadRecords_CollapseKeepsHigherRevision(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestLoadRecords_CollapseKeepsHigherRevision(t *testing.T) {
 func TestLoadRecords_LowerRevisionFirst_StillKeepsHigher(t *testing.T) {
 	// Same as above but high revision comes before low in the file.
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestLoadRecords_LowerRevisionFirst_StillKeepsHigher(t *testing.T) {
 
 func TestLoadRecords_SkipsDeleted(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestLoadRecords_SkipsDeleted(t *testing.T) {
 
 func TestLoadRecords_SkipsBlankLines(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestLoadRecords_SkipsBlankLines(t *testing.T) {
 
 func TestLoadRecords_EmptyStore(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestLoadRecords_EmptyStore(t *testing.T) {
 
 func TestLoadRecords_SkipsFutureSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestLoadRecords_SkipsFutureSchemaVersion(t *testing.T) {
 // TestLoadIndexFile_ConflictParsing checks that conflicts array is loaded.
 func TestLoadIndexFile_ConflictParsing(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestLoadIndexFile_ConflictParsing(t *testing.T) {
 
 func TestLoadIndexFile_MissingFile(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestCallStatusJSON_NonZeroExitEmptyOutput(t *testing.T) {
 // on the same fixture and asserts the order is identical both times.
 func TestLoadRecords_DeterministicOrder(t *testing.T) {
 	dir := t.TempDir()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

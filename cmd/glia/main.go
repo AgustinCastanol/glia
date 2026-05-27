@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/agustincastanol/wrapper-mems/cmd/wrapper-mems/cmd"
+	"github.com/agustincastanol/glia/cmd/glia/cmd"
 )
 
 func main() {

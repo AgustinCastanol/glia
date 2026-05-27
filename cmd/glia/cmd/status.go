@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/config"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
-	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/config"
+	"github.com/agustincastanol/glia/internal/store"
+	enginesync "github.com/agustincastanol/glia/internal/sync"
 )
 
 
@@ -48,7 +48,7 @@ var statusCmd = &cobra.Command{
 reachable. Exit codes (REQ-SE-52):
   0  all providers healthy
   1  at least one provider degraded
-  2  wrapper-mems itself misconfigured (no store, corrupt index, schema mismatch)`,
+  2  glia itself misconfigured (no store, corrupt index, schema mismatch)`,
 	Args: cobra.NoArgs,
 	Run:  runStatus,
 }
@@ -71,12 +71,12 @@ func runStatus(cmd *cobra.Command, _ []string) {
 	s, err := requireStore(dir)
 	if err != nil {
 		// requireStore already wrote to stderr.
-		// errNoStore / corrupt store → exit 2 (misconfigured wrapper-mems).
+		// errNoStore / corrupt store → exit 2 (misconfigured glia).
 		os.Exit(2)
 	}
 	defer s.Close()
 
-	if err := enforceMinVersion(filepath.Join(dir, ".wrapper-mems")); err != nil {
+	if err := enforceMinVersion(filepath.Join(dir, ".glia")); err != nil {
 		fmt.Fprintln(os.Stderr, "status:", err)
 		os.Exit(1)
 	}

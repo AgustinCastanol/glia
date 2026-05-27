@@ -79,7 +79,7 @@ func (r *RunReport) WriteSummary(w io.Writer) {
 	}
 
 	if r.Conflicts > 0 {
-		fmt.Fprintf(w, "conflicts=%d — run `wrapper-mems status --conflicts` and `wrapper-mems sync resolve`\n",
+		fmt.Fprintf(w, "conflicts=%d — run `glia status --conflicts` and `glia sync resolve`\n",
 			r.Conflicts)
 	}
 

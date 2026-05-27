@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/agustincastanol/wrapper-mems/internal/tui"
+	"github.com/agustincastanol/glia/internal/tui"
 )
 
 // tuiCmd is the primary TUI subcommand. (REQ-TUI-01)
@@ -18,12 +18,12 @@ var tuiCmd = &cobra.Command{
 observations, inspecting provider health, and resolving conflicts.
 
 The dashboard is read-only: mutations (sync, conflict resolve) are delegated
-to wrapper-mems subprocesses. (D1, D8)`,
+to glia subprocesses. (D1, D8)`,
 	Args: cobra.NoArgs,
 	RunE: runTUI,
 }
 
-// uiCmd is an alias for tuiCmd so users can type `wrapper-mems ui`. (REQ-TUI-01)
+// uiCmd is an alias for tuiCmd so users can type `glia ui`. (REQ-TUI-01)
 var uiCmd = &cobra.Command{
 	Use:   "ui",
 	Short: "Alias for tui — open the terminal dashboard",

@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
+	"github.com/agustincastanol/glia/internal/adapter"
 )
 
 // verifiedItemKeys are the keys the live worker MUST return on each item. Any

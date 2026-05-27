@@ -26,7 +26,7 @@ type Config struct {
 }
 
 // Default returns the baseline Config used when config.yaml is absent or
-// written by `wrapper-mems init`.
+// written by `glia init`.
 func Default() Config {
 	return Config{
 		MirrorEngram:         false,

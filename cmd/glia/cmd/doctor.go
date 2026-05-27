@@ -13,9 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/config"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/config"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // CheckStatus represents the severity of a check result.
@@ -54,8 +54,8 @@ Exit codes (REQ-DOC-02):
   2  one or more errors that blocked checks
 
 Use --fix to automatically repair fixable issues:
-  - Add missing .gitignore entries (.wrapper-mems/index.json, .wrapper-mems/.lock)
-  - Remove .wrapper-mems/memory.jsonl from .gitignore (D2: it must be committed)
+  - Add missing .gitignore entries (.glia/index.json, .glia/.lock)
+  - Remove .glia/memory.jsonl from .gitignore (D2: it must be committed)
   - Rebuild index.json when corrupt or inconsistent with memory.jsonl
   - Remove a stale .lock file whose PID is no longer alive
   - Truncate memory.jsonl to last complete line (partial-write recovery)
@@ -72,8 +72,8 @@ func init() {
 }
 
 // memoryJSONLGitignorePattern matches lines that gitignore memory.jsonl
-// (with or without the .wrapper-mems/ prefix, REQ-DOC-03).
-var memoryJSONLGitignorePattern = regexp.MustCompile(`^(\.wrapper-mems/)?memory\.jsonl\s*$`)
+// (with or without the .glia/ prefix, REQ-DOC-03).
+var memoryJSONLGitignorePattern = regexp.MustCompile(`^(\.glia/)?memory\.jsonl\s*$`)
 
 func runDoctor(cmd *cobra.Command, _ []string) error {
 	dir, err := projectDir()
@@ -150,7 +150,7 @@ func checkCanonicalStore(storeDir string) CheckResult {
 		return CheckResult{
 			Name:    "canonical store",
 			Status:  StatusErr,
-			Message: "memory.jsonl not found — run `wrapper-mems init`",
+			Message: "memory.jsonl not found — run `glia init`",
 		}
 	}
 	if err != nil {
@@ -179,7 +179,7 @@ func checkCanonicalStore(storeDir string) CheckResult {
 	}
 }
 
-// checkSchema verifies schema.json exists and WrapperMemsMinVersion is
+// checkSchema verifies schema.json exists and GliaMinVersion is
 // compatible with the current binary Version.
 func checkSchema(storeDir string) CheckResult {
 	info, err := store.ReadSchema(storeDir)
@@ -191,7 +191,7 @@ func checkSchema(storeDir string) CheckResult {
 		}
 	}
 
-	if refuseErr := config.Refuse(Version, info.WrapperMemsMinVersion); refuseErr != nil {
+	if refuseErr := config.Refuse(Version, info.GliaMinVersion); refuseErr != nil {
 		return CheckResult{
 			Name:    "schema",
 			Status:  StatusErr,
@@ -199,7 +199,7 @@ func checkSchema(storeDir string) CheckResult {
 		}
 	}
 
-	minVer := info.WrapperMemsMinVersion
+	minVer := info.GliaMinVersion
 	if minVer == "" {
 		minVer = "(any)"
 	}

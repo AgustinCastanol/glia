@@ -11,26 +11,26 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// storeDirName is the canonical subdirectory used by wrapper-mems stores.
+// storeDirName is the canonical subdirectory used by glia stores.
 // Kept as a package-level constant here so that internal/config does not import
 // internal/store (which would create a back-edge: store → config is not allowed).
-const storeDirName = ".wrapper-mems"
+const storeDirName = ".glia"
 
 // configFileName is the name of the project config file inside storeDirName.
 const configFileName = "config.yaml"
 
 // Load resolves the effective runtime Config via a six-step process:
 //  1. Start from Default().
-//  2. Read and merge the project config file (<projectDir>/.wrapper-mems/config.yaml).
+//  2. Read and merge the project config file (<projectDir>/.glia/config.yaml).
 //  3. Read and merge the user config file (userConfigPath). A missing user file is
 //     silently skipped (REQ-CFG-05). An existing-but-malformed file is an error.
 //  4. Apply env var overrides via envOverlay (REQ-CFG-03).
 //  5. Expand "~/" prefixes in path fields (expandPaths).
 //  6. Validate the resulting config.
 //
-// projectDir must point to the project root directory (not the .wrapper-mems/
+// projectDir must point to the project root directory (not the .glia/
 // subdirectory). userConfigPath may be empty, in which case the XDG default is
-// used (~/.config/wrapper-mems/config.yaml).
+// used (~/.config/glia/config.yaml).
 func Load(projectDir, userConfigPath string) (*Config, error) {
 	cfg := Default()
 
@@ -74,17 +74,17 @@ const (
 	layerUser
 )
 
-// defaultUserConfigPath returns ~/.config/wrapper-mems/config.yaml, honouring
+// defaultUserConfigPath returns ~/.config/glia/config.yaml, honouring
 // $XDG_CONFIG_HOME when set.
 func defaultUserConfigPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "wrapper-mems", "config.yaml")
+		return filepath.Join(xdg, "glia", "config.yaml")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
-	return filepath.Join(home, ".config", "wrapper-mems", "config.yaml")
+	return filepath.Join(home, ".config", "glia", "config.yaml")
 }
 
 // mergeFile reads the YAML file at path, decodes it into a map[string]any
@@ -273,7 +273,7 @@ func validate(c *Config) error {
 		return fmt.Errorf("config: unsupported schema_version %d (want 1)", c.SchemaVersion)
 	}
 	if c.Project == "" {
-		return fmt.Errorf("config: project is required — run `wrapper-mems init` or set WRAPPER_MEMS_PROJECT")
+		return fmt.Errorf("config: project is required — run `glia init` or set WRAPPER_MEMS_PROJECT")
 	}
 	if c.Providers.Engram.Transport != "cli" && c.Providers.Engram.Transport != "http" {
 		return fmt.Errorf("config: providers.engram.transport must be \"cli\" or \"http\", got %q", c.Providers.Engram.Transport)

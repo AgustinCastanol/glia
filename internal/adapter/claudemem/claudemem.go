@@ -23,9 +23,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	engramidentity "github.com/agustincastanol/wrapper-mems/internal/identity"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	engramidentity "github.com/agustincastanol/glia/internal/identity"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // claudeMemRecord is the internal representation of a single claude-mem
@@ -74,7 +74,7 @@ type observationsPage struct {
 
 // ---------------------------------------------------------------------------
 // Config holds the claudemem adapter construction parameters. The wiring
-// helper (cmd/wrapper-mems/cmd/wiring.go) translates *config.Config →
+// helper (cmd/glia/cmd/wiring.go) translates *config.Config →
 // claudemem.Config. Adapters never import internal/config (ADR-D3).
 // ---------------------------------------------------------------------------
 

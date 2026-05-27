@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/agustincastanol/wrapper-mems/internal/config"
+	"github.com/agustincastanol/glia/internal/config"
 )
 
 // TestBuildAdapters_EnabledOnlyReturned verifies that only enabled providers

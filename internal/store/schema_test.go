@@ -69,25 +69,25 @@ func TestLoadOrBootstrapSchema_TooNewErrorsIs(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrSchemaTooNew), "expected errors.Is(err, ErrSchemaTooNew) == true")
 }
 
-// TestSchemaFile_WrapperMemsMinVersion_RoundTrip verifies the new field
+// TestSchemaFile_GliaMinVersion_RoundTrip verifies the new field
 // round-trips through JSON marshal/unmarshal (T-1.7).
-func TestSchemaFile_WrapperMemsMinVersion_RoundTrip(t *testing.T) {
+func TestSchemaFile_GliaMinVersion_RoundTrip(t *testing.T) {
 	sf := schemaFile{
 		SchemaVersion:         1,
 		CreatedAt:             "2026-05-25T00:00:00Z",
-		WrapperMemsMinVersion: "v0.2.0",
+		GliaMinVersion: "v0.2.0",
 	}
 	data, err := json.Marshal(sf)
 	require.NoError(t, err)
 
 	var out schemaFile
 	require.NoError(t, json.Unmarshal(data, &out))
-	assert.Equal(t, "v0.2.0", out.WrapperMemsMinVersion)
+	assert.Equal(t, "v0.2.0", out.GliaMinVersion)
 }
 
-// TestSchemaFile_WrapperMemsMinVersion_OmittedWhenEmpty verifies that an empty
-// WrapperMemsMinVersion is omitted from the JSON output (omitempty — T-1.7).
-func TestSchemaFile_WrapperMemsMinVersion_OmittedWhenEmpty(t *testing.T) {
+// TestSchemaFile_GliaMinVersion_OmittedWhenEmpty verifies that an empty
+// GliaMinVersion is omitted from the JSON output (omitempty — T-1.7).
+func TestSchemaFile_GliaMinVersion_OmittedWhenEmpty(t *testing.T) {
 	sf := schemaFile{SchemaVersion: 1, CreatedAt: "2026-05-25T00:00:00Z"}
 	data, err := json.Marshal(sf)
 	require.NoError(t, err)
@@ -95,8 +95,8 @@ func TestSchemaFile_WrapperMemsMinVersion_OmittedWhenEmpty(t *testing.T) {
 	// The JSON must NOT contain the key when the field is empty.
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(data, &raw))
-	_, present := raw["wrapper_mems_min_version"]
-	assert.False(t, present, "wrapper_mems_min_version must be absent when empty (omitempty)")
+	_, present := raw["glia_min_version"]
+	assert.False(t, present, "glia_min_version must be absent when empty (omitempty)")
 }
 
 // TestReadSchema_RoundTrip verifies that ReadSchema reads the field correctly.
@@ -105,7 +105,7 @@ func TestReadSchema_RoundTrip(t *testing.T) {
 	sf := schemaFile{
 		SchemaVersion:         1,
 		CreatedAt:             "2026-05-25T00:00:00Z",
-		WrapperMemsMinVersion: "v1.0.0",
+		GliaMinVersion: "v1.0.0",
 	}
 	data, err := json.Marshal(sf)
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestReadSchema_RoundTrip(t *testing.T) {
 
 	info, err := ReadSchema(dir)
 	require.NoError(t, err)
-	assert.Equal(t, "v1.0.0", info.WrapperMemsMinVersion)
+	assert.Equal(t, "v1.0.0", info.GliaMinVersion)
 	assert.Equal(t, 1, info.SchemaVersion)
 }
 

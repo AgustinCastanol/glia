@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
+	"github.com/agustincastanol/glia/internal/adapter"
 )
 
 // pullProvider executes the pull loop for a single provider adapter (§6.2).

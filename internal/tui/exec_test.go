@@ -70,7 +70,7 @@ func TestSyncCmd_ArgvConstructionForSync(t *testing.T) {
 	if capturedName == "" {
 		t.Fatal("runner was not called")
 	}
-	// Expected: wrapper-mems --dir /myproject sync
+	// Expected: glia --dir /myproject sync
 	wantArgs := []string{"--dir", "/myproject", "sync"}
 	if len(capturedArgs) != len(wantArgs) {
 		t.Fatalf("expected args %v, got %v", wantArgs, capturedArgs)

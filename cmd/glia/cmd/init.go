@@ -14,8 +14,8 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/agustincastanol/wrapper-mems/internal/config"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/config"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // gitignoreEntries are the lines that init guarantees are present in .gitignore.
@@ -23,8 +23,8 @@ import (
 // (PRD-5 §5, D2). Only runtime-generated files that should not be committed are
 // listed here.
 var gitignoreEntries = []string{
-	".wrapper-mems/index.json",
-	".wrapper-mems/.lock",
+	".glia/index.json",
+	".glia/.lock",
 }
 
 var initFlags struct {
@@ -39,8 +39,8 @@ var probeFn = defaultProbe
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialise the wrapper-mems store in the current directory",
-	Long: `init creates the .wrapper-mems/ store directory, writes a config.yaml
+	Short: "Initialise the glia store in the current directory",
+	Long: `init creates the .glia/ store directory, writes a config.yaml
 populated with auto-detected values, and ensures .gitignore contains the
 required entries (REQ-INIT-01..07).
 
@@ -52,7 +52,7 @@ Use --project and --providers together for non-interactive (CI) mode.`,
 
 func init() {
 	initCmd.Flags().BoolVar(&initFlags.force, "force", false,
-		"overwrite existing .wrapper-mems/ directory")
+		"overwrite existing .glia/ directory")
 	initCmd.Flags().StringSliceVar(&initFlags.providers, "providers", nil,
 		"comma-separated list of providers to enable (e.g. engram,claude-mem); skips probing")
 	initCmd.Flags().StringVar(&initFlags.project, "project", "",
@@ -68,11 +68,11 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	storeDir := storePath(dir)
 
-	// REQ-INIT-01: refuse if .wrapper-mems/ exists unless --force.
+	// REQ-INIT-01: refuse if .glia/ exists unless --force.
 	if _, err := os.Stat(storeDir); err == nil {
 		if !initFlags.force {
 			fmt.Fprintf(os.Stderr,
-				"init: .wrapper-mems/ already exists in %s (use --force to overwrite)\n", dir)
+				"init: .glia/ already exists in %s (use --force to overwrite)\n", dir)
 			return fmt.Errorf("store already initialised")
 		}
 		// --force: remove and recreate.
@@ -121,14 +121,14 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	}
 
 	// REQ-INIT-07: print next-steps block.
-	fmt.Fprintf(cmd.OutOrStdout(), "wrapper-mems initialised in %s\n\n", storeDir)
+	fmt.Fprintf(cmd.OutOrStdout(), "glia initialised in %s\n\n", storeDir)
 	fmt.Fprintln(cmd.OutOrStdout(), "Next steps:")
-	fmt.Fprintln(cmd.OutOrStdout(), "  wrapper-mems sync        # run first sync")
-	fmt.Fprintln(cmd.OutOrStdout(), "  wrapper-mems status      # check provider health")
-	fmt.Fprintln(cmd.OutOrStdout(), "  git add .wrapper-mems/   # commit the store")
+	fmt.Fprintln(cmd.OutOrStdout(), "  glia sync        # run first sync")
+	fmt.Fprintln(cmd.OutOrStdout(), "  glia status      # check provider health")
+	fmt.Fprintln(cmd.OutOrStdout(), "  git add .glia/   # commit the store")
 	fmt.Fprintln(cmd.OutOrStdout(), "")
-	fmt.Fprintln(cmd.OutOrStdout(), "Share .wrapper-mems/ with teammates by committing it.")
-	fmt.Fprintln(cmd.OutOrStdout(), "Docs: https://github.com/agustincastanol/wrapper-mems")
+	fmt.Fprintln(cmd.OutOrStdout(), "Share .glia/ with teammates by committing it.")
+	fmt.Fprintln(cmd.OutOrStdout(), "Docs: https://github.com/agustincastanol/glia")
 
 	return nil
 }
@@ -266,11 +266,11 @@ func defaultProbe(ctx context.Context, args ...string) error {
 type schemaFileJSON struct {
 	SchemaVersion         int    `json:"schema_version"`
 	CreatedAt             string `json:"created_at"`
-	WrapperMemsMinVersion string `json:"wrapper_mems_min_version,omitempty"`
+	GliaMinVersion string `json:"glia_min_version,omitempty"`
 }
 
 // writeSchemaFile writes a fresh schema.json to storeDir.
-// WrapperMemsMinVersion is intentionally empty (permissive default, D6).
+// GliaMinVersion is intentionally empty (permissive default, D6).
 func writeSchemaFile(storeDir string) error {
 	sf := schemaFileJSON{
 		SchemaVersion: store.StoreSupportedVersion,

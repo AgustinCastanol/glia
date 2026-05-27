@@ -11,18 +11,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // --- helpers ----------------------------------------------------------------
 
-// newTempStore creates a minimal .wrapper-mems/ store directory for testing.
+// newTempStore creates a minimal .glia/ store directory for testing.
 // Returns the project dir and store dir.
 func newTempStore(t *testing.T) (projectDir, storeDir string) {
 	t.Helper()
 	projectDir = t.TempDir()
-	storeDir = filepath.Join(projectDir, ".wrapper-mems")
+	storeDir = filepath.Join(projectDir, ".glia")
 	if err := os.MkdirAll(storeDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestCheckSchema_MinVersionExceeded(t *testing.T) {
 	schema := map[string]interface{}{
 		"schema_version":            1,
 		"created_at":                time.Now().UTC().Format(time.RFC3339),
-		"wrapper_mems_min_version":  "v9.0.0",
+		"glia_min_version":  "v9.0.0",
 	}
 	writeJSON(t, filepath.Join(storeDir, "schema.json"), schema)
 
@@ -247,7 +247,7 @@ func TestCheckClaudeMem_Unreachable(t *testing.T) {
 func TestCheckGitignore_AllCorrect(t *testing.T) {
 	dir := t.TempDir()
 	giPath := filepath.Join(dir, ".gitignore")
-	content := ".wrapper-mems/index.json\n.wrapper-mems/.lock\n"
+	content := ".glia/index.json\n.glia/.lock\n"
 	os.WriteFile(giPath, []byte(content), 0644)
 
 	r := checkGitignore(giPath)
@@ -275,7 +275,7 @@ func TestCheckGitignore_MissingEntries(t *testing.T) {
 func TestCheckGitignore_MemoryJSONLPresent(t *testing.T) {
 	dir := t.TempDir()
 	giPath := filepath.Join(dir, ".gitignore")
-	content := ".wrapper-mems/index.json\n.wrapper-mems/.lock\n.wrapper-mems/memory.jsonl\n"
+	content := ".glia/index.json\n.glia/.lock\n.glia/memory.jsonl\n"
 	os.WriteFile(giPath, []byte(content), 0644)
 
 	r := checkGitignore(giPath)
@@ -295,7 +295,7 @@ func TestCheckGitignore_MemoryJSONLPresent(t *testing.T) {
 func TestCheckGitignore_FixRemovesMemoryJSONL(t *testing.T) {
 	dir := t.TempDir()
 	giPath := filepath.Join(dir, ".gitignore")
-	content := ".wrapper-mems/index.json\n.wrapper-mems/.lock\n.wrapper-mems/memory.jsonl\n*.log\n"
+	content := ".glia/index.json\n.glia/.lock\n.glia/memory.jsonl\n*.log\n"
 	os.WriteFile(giPath, []byte(content), 0644)
 
 	r := checkGitignore(giPath)
@@ -315,11 +315,11 @@ func TestCheckGitignore_FixRemovesMemoryJSONL(t *testing.T) {
 	if strings.Contains(got, "memory.jsonl") {
 		t.Errorf("expected memory.jsonl to be removed, got:\n%s", got)
 	}
-	if !strings.Contains(got, ".wrapper-mems/index.json") {
-		t.Errorf("expected .wrapper-mems/index.json to be preserved, got:\n%s", got)
+	if !strings.Contains(got, ".glia/index.json") {
+		t.Errorf("expected .glia/index.json to be preserved, got:\n%s", got)
 	}
-	if !strings.Contains(got, ".wrapper-mems/.lock") {
-		t.Errorf("expected .wrapper-mems/.lock to be preserved, got:\n%s", got)
+	if !strings.Contains(got, ".glia/.lock") {
+		t.Errorf("expected .glia/.lock to be preserved, got:\n%s", got)
 	}
 	if !strings.Contains(got, "*.log") {
 		t.Errorf("expected *.log to be preserved, got:\n%s", got)
@@ -330,7 +330,7 @@ func TestCheckGitignore_FixRemovesMemoryJSONL(t *testing.T) {
 func TestCheckGitignore_FixIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	giPath := filepath.Join(dir, ".gitignore")
-	content := ".wrapper-mems/index.json\n.wrapper-mems/.lock\n.wrapper-mems/memory.jsonl\n"
+	content := ".glia/index.json\n.glia/.lock\n.glia/memory.jsonl\n"
 	os.WriteFile(giPath, []byte(content), 0644)
 
 	// First fix.

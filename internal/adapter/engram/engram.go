@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	engramidentity "github.com/agustincastanol/wrapper-mems/internal/identity"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	engramidentity "github.com/agustincastanol/glia/internal/identity"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // Config holds the engram adapter construction parameters. The wiring helper
-// (cmd/wrapper-mems/cmd/wiring.go) translates *config.Config → engram.Config
+// (cmd/glia/cmd/wiring.go) translates *config.Config → engram.Config
 // and passes it to New(). Adapters never import internal/config (ADR-D3).
 type Config struct {
 	// Enabled controls whether this provider is active. New() always constructs

@@ -1,4 +1,4 @@
-// debug-store is an INTERNAL smoke-testing tool for the wrapper-mems store
+// debug-store is an INTERNAL smoke-testing tool for the glia store
 // package. It is NOT the user-facing CLI described in PRD-5.
 // Usage:
 //
@@ -15,7 +15,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 func main() {

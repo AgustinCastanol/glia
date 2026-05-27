@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/agustincastanol/wrapper-mems/internal/config"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
-	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
+	"github.com/agustincastanol/glia/internal/config"
+	"github.com/agustincastanol/glia/internal/store"
+	enginesync "github.com/agustincastanol/glia/internal/sync"
 )
 
 // syncFlags holds flags shared across sync, sync pull, and sync push.
@@ -138,7 +138,7 @@ func init() {
 	syncCmd.PersistentFlags().BoolVar(&syncFlags.noMirror, "no-mirror", false,
 		"disable mirror-engram even if config.yaml enables it")
 	syncCmd.PersistentFlags().BoolVar(&syncFlags.commit, "commit", false,
-		"git add .wrapper-mems/ && git commit after a successful sync")
+		"git add .glia/ && git commit after a successful sync")
 	syncCmd.PersistentFlags().IntVar(&syncFlags.max, "max", 0,
 		"cap records processed per provider per run (0 = unlimited)")
 
@@ -152,7 +152,7 @@ func init() {
 // shared wiring helper (D3), and translates SyncConfig into enginesync.Config
 // via toEngineConfig() so the engine package stays unchanged.
 func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
-	if err := enforceMinVersion(filepath.Join(dir, ".wrapper-mems")); err != nil {
+	if err := enforceMinVersion(filepath.Join(dir, ".glia")); err != nil {
 		return nil, err
 	}
 
@@ -218,7 +218,7 @@ func syncExitErr(s *store.Store, report *enginesync.RunReport) error {
 	// Conflicts present → exit 2.
 	if len(s.Conflicts()) > 0 {
 		fmt.Fprintln(os.Stderr,
-			"conflicts detected — run `wrapper-mems status --conflicts` and `wrapper-mems sync resolve`")
+			"conflicts detected — run `glia status --conflicts` and `glia sync resolve`")
 		return errConflicts
 	}
 

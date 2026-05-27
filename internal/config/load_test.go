@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// writeProjectConfig writes config.yaml into <dir>/.wrapper-mems/.
+// writeProjectConfig writes config.yaml into <dir>/.glia/.
 func writeProjectConfig(t *testing.T, dir string, content string) {
 	t.Helper()
 	storeDir := filepath.Join(dir, storeDirName)

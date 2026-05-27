@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // conflictItem wraps a ConflictEntry for the bubbles/list widget.
@@ -157,7 +157,7 @@ func (m *conflictModel) handleKey(msg tea.KeyMsg) (subModel, tea.Cmd) {
 	return m, cmd
 }
 
-// resolveCmd spawns `wrapper-mems --dir <dir> sync resolve <id> --keep <n>`.
+// resolveCmd spawns `glia --dir <dir> sync resolve <id> --keep <n>`.
 func (m *conflictModel) resolveCmd(canonicalID string, keep int) tea.Cmd {
 	runner := m.runner
 	dir := m.dir

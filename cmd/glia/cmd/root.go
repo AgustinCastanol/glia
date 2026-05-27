@@ -1,4 +1,4 @@
-// Package cmd implements the cobra command tree for the wrapper-mems CLI.
+// Package cmd implements the cobra command tree for the glia CLI.
 package cmd
 
 import (
@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // rootFlags holds the persistent flags shared across all subcommands.
@@ -23,16 +23,16 @@ var rootFlags struct {
 	verbose bool
 }
 
-// rootCmd is the cobra root command for wrapper-mems.
+// rootCmd is the cobra root command for glia.
 var rootCmd = &cobra.Command{
-	Use:   "wrapper-mems",
+	Use:   "glia",
 	Short: "Bidirectional sync between canonical memory store and providers",
-	Long: `wrapper-mems synchronises observations between a local append-only canonical
-store (.wrapper-mems/) and registered memory providers such as engram and claude-mem.
+	Long: `glia synchronises observations between a local append-only canonical
+store (.glia/) and registered memory providers such as engram and claude-mem.
 
-Run 'wrapper-mems init' first to initialise the store in the current directory.
+Run 'glia init' first to initialise the store in the current directory.
 
-No telemetry is collected. Ever. wrapper-mems never transmits usage data, crash
+No telemetry is collected. Ever. glia never transmits usage data, crash
 reports, or analytics to any external endpoint. (REQ-TEL-01)`,
 	SilenceErrors: true,
 	SilenceUsage:  true,
@@ -67,9 +67,9 @@ func projectDir() (string, error) {
 	return os.Getwd()
 }
 
-// storePath returns the .wrapper-mems/ directory path under the project root.
+// storePath returns the .glia/ directory path under the project root.
 func storePath(dir string) string {
-	return dir + "/.wrapper-mems"
+	return dir + "/.glia"
 }
 
 // exitCode maps a run error to a CLI exit code per D6 / REQ-SE-51..53.
@@ -97,9 +97,9 @@ func exitWith(err error) {
 // conflicts so exitCode() can map it to exit 2.
 var errConflicts = errors.New("unresolved conflicts")
 
-// errNoStore is returned when the .wrapper-mems/ directory does not exist
+// errNoStore is returned when the .glia/ directory does not exist
 // and the command requires an initialised store (REQ-SE-05).
-var errNoStore = errors.New("no canonical store found — run `wrapper-mems init` first")
+var errNoStore = errors.New("no canonical store found — run `glia init` first")
 
 // requireStore opens the store at dir or writes the "no store" message and
 // returns errNoStore. The caller must defer s.Close() on success.

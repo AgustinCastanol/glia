@@ -68,13 +68,13 @@ func TestRefuse(t *testing.T) {
 		}
 	})
 
-	t.Run("error message contains 'upgrade wrapper-mems'", func(t *testing.T) {
+	t.Run("error message contains 'upgrade glia'", func(t *testing.T) {
 		err := Refuse("v0.1.0", "v9.0.0")
 		if err == nil {
 			t.Fatal("expected error")
 		}
 		msg := err.Error()
-		for _, substr := range []string{"upgrade wrapper-mems"} {
+		for _, substr := range []string{"upgrade glia"} {
 			if !containsCI(msg, substr) {
 				t.Errorf("error message %q does not contain %q", msg, substr)
 			}

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agustincastanol/wrapper-mems/internal/adapter"
-	"github.com/agustincastanol/wrapper-mems/internal/adapter/engram"
-	"github.com/agustincastanol/wrapper-mems/internal/store"
+	"github.com/agustincastanol/glia/internal/adapter"
+	"github.com/agustincastanol/glia/internal/adapter/engram"
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // ---------------------------------------------------------------------------

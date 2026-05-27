@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/agustincastanol/wrapper-mems/internal/config"
+	"github.com/agustincastanol/glia/internal/config"
 )
 
 // executeInit is a test helper that runs the init command with a given set of
@@ -84,8 +84,8 @@ func TestInit_REQ_INIT_01_ForceOverwrites(t *testing.T) {
 		t.Fatalf("first init: %v", err)
 	}
 
-	// Write a sentinel file inside .wrapper-mems/ to verify it gets replaced.
-	sentinel := filepath.Join(dir, ".wrapper-mems", "sentinel.txt")
+	// Write a sentinel file inside .glia/ to verify it gets replaced.
+	sentinel := filepath.Join(dir, ".glia", "sentinel.txt")
 	if err := os.WriteFile(sentinel, []byte("old"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestInit_REQ_INIT_04_MemoryJsonlIsEmpty(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 
-	memPath := filepath.Join(dir, ".wrapper-mems", "memory.jsonl")
+	memPath := filepath.Join(dir, ".glia", "memory.jsonl")
 	fi, err := os.Stat(memPath)
 	if err != nil {
 		t.Fatalf("memory.jsonl not found: %v", err)
@@ -304,7 +304,7 @@ func TestInit_REQ_INIT_05_GitignoreEntriesCorrect(t *testing.T) {
 	giStr := string(gi)
 
 	// Must contain these two entries.
-	for _, want := range []string{".wrapper-mems/index.json", ".wrapper-mems/.lock"} {
+	for _, want := range []string{".glia/index.json", ".glia/.lock"} {
 		if !strings.Contains(giStr, want) {
 			t.Errorf(".gitignore missing entry %q", want)
 		}
@@ -356,7 +356,7 @@ func TestInit_REQ_INIT_05_GitignoreIdempotentWhenEntriesPresent(t *testing.T) {
 
 	// Pre-populate with both required entries.
 	giPath := filepath.Join(dir, ".gitignore")
-	content := ".wrapper-mems/index.json\n.wrapper-mems/.lock\n"
+	content := ".glia/index.json\n.glia/.lock\n"
 	if err := os.WriteFile(giPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -412,8 +412,8 @@ func TestInit_REQ_INIT_07_NextStepsBlock(t *testing.T) {
 	if !strings.Contains(out, "Next steps") {
 		t.Errorf("output missing 'Next steps' block, got:\n%s", out)
 	}
-	if !strings.Contains(out, "wrapper-mems sync") {
-		t.Errorf("output missing 'wrapper-mems sync' hint, got:\n%s", out)
+	if !strings.Contains(out, "glia sync") {
+		t.Errorf("output missing 'glia sync' hint, got:\n%s", out)
 	}
 }
 
@@ -428,7 +428,7 @@ func TestInit_T23_PrivacyFieldPresent(t *testing.T) {
 	}
 
 	// Read raw YAML and confirm excluded_session_ids key is present.
-	cfgPath := filepath.Join(dir, ".wrapper-mems", "config.yaml")
+	cfgPath := filepath.Join(dir, ".glia", "config.yaml")
 	raw, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatalf("config.yaml not found: %v", err)
@@ -450,7 +450,7 @@ func TestInit_T23_PrivacyFieldPresent(t *testing.T) {
 // assertFilesExist checks that the three required files are present (REQ-INIT-04).
 func assertFilesExist(t *testing.T, dir string) {
 	t.Helper()
-	storeDir := filepath.Join(dir, ".wrapper-mems")
+	storeDir := filepath.Join(dir, ".glia")
 	for _, name := range []string{"schema.json", "config.yaml", "memory.jsonl"} {
 		if _, err := os.Stat(filepath.Join(storeDir, name)); err != nil {
 			t.Errorf("%s not created: %v", name, err)
@@ -458,11 +458,11 @@ func assertFilesExist(t *testing.T, dir string) {
 	}
 }
 
-// readConfigYAML reads and unmarshals config.yaml from the .wrapper-mems/
+// readConfigYAML reads and unmarshals config.yaml from the .glia/
 // directory under dir.
 func readConfigYAML(t *testing.T, dir string) *config.Config {
 	t.Helper()
-	cfgPath := filepath.Join(dir, ".wrapper-mems", "config.yaml")
+	cfgPath := filepath.Join(dir, ".glia", "config.yaml")
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatalf("read config.yaml: %v", err)

@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
-	"github.com/agustincastanol/wrapper-mems/internal/store"
-	enginesync "github.com/agustincastanol/wrapper-mems/internal/sync"
+	"github.com/agustincastanol/glia/internal/store"
+	enginesync "github.com/agustincastanol/glia/internal/sync"
 )
 
-// openStore opens the store at storePath (the .wrapper-mems/ subdirectory).
+// openStore opens the store at storePath (the .glia/ subdirectory).
 // It does NOT validate whether the parent dir is initialised — use requireStore
 // for commands that need a pre-existing store.
 func openStore(storeDir string) (*store.Store, error) {

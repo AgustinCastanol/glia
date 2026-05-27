@@ -32,7 +32,7 @@ func TestVersion_DefaultOutput(t *testing.T) {
 }
 
 // TestVersion_OutputFormat verifies the exact output format:
-// "wrapper-mems <version> (schema <range>)\n" (REQ-VER-01).
+// "glia <version> (schema <range>)\n" (REQ-VER-01).
 func TestVersion_OutputFormat(t *testing.T) {
 	orig := Version
 	Version = "dev"
@@ -44,7 +44,7 @@ func TestVersion_OutputFormat(t *testing.T) {
 
 	versionCmd.Run(versionCmd, nil)
 
-	want := "wrapper-mems dev (schema v1)\n"
+	want := "glia dev (schema v1)\n"
 	if got := buf.String(); got != want {
 		t.Errorf("version output:\n  got:  %q\n  want: %q", got, want)
 	}
@@ -86,7 +86,7 @@ func TestEnforceMinVersion_MissingSchemaIsPermissive(t *testing.T) {
 }
 
 // TestEnforceMinVersion_EmptyMinIsPermissive verifies that a schema.json without
-// wrapper_mems_min_version is permissive (REQ-CFG-04 / config.Refuse).
+// glia_min_version is permissive (REQ-CFG-04 / config.Refuse).
 func TestEnforceMinVersion_EmptyMinIsPermissive(t *testing.T) {
 	dir := t.TempDir()
 	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z"}`)
@@ -100,11 +100,11 @@ func TestEnforceMinVersion_EmptyMinIsPermissive(t *testing.T) {
 	}
 }
 
-// TestEnforceMinVersion_BinaryTooOldRefuses verifies that wrapper_mems_min_version
+// TestEnforceMinVersion_BinaryTooOldRefuses verifies that glia_min_version
 // greater than the binary Version produces a refusal error (REQ-CFG-04).
 func TestEnforceMinVersion_BinaryTooOldRefuses(t *testing.T) {
 	dir := t.TempDir()
-	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","wrapper_mems_min_version":"v2.0.0"}`)
+	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","glia_min_version":"v2.0.0"}`)
 
 	orig := Version
 	Version = "v0.5.0"
@@ -123,7 +123,7 @@ func TestEnforceMinVersion_BinaryTooOldRefuses(t *testing.T) {
 // does not refuse (REQ-CFG-04).
 func TestEnforceMinVersion_BinaryAtOrAboveOK(t *testing.T) {
 	dir := t.TempDir()
-	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","wrapper_mems_min_version":"v0.1.0"}`)
+	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","glia_min_version":"v0.1.0"}`)
 
 	orig := Version
 	Version = "v0.1.0"
@@ -138,7 +138,7 @@ func TestEnforceMinVersion_BinaryAtOrAboveOK(t *testing.T) {
 // treated as infinitely high and satisfies any min_version (config.CompareVersion contract).
 func TestEnforceMinVersion_DevSatisfiesAnyMin(t *testing.T) {
 	dir := t.TempDir()
-	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","wrapper_mems_min_version":"v99.0.0"}`)
+	writeSchema(t, dir, `{"schema_version":1,"created_at":"2026-01-01T00:00:00Z","glia_min_version":"v99.0.0"}`)
 
 	orig := Version
 	Version = "dev"

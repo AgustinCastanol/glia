@@ -1,4 +1,4 @@
-module github.com/agustincastanol/wrapper-mems
+module github.com/agustincastanol/glia
 
 go 1.26.1
 

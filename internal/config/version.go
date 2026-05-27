@@ -46,7 +46,7 @@ func Refuse(binaryVersion, storeMin string) error {
 	}
 	if CompareVersion(storeMin, binaryVersion) > 0 {
 		return fmt.Errorf(
-			"this store requires wrapper-mems >= %s (binary is %s): please upgrade wrapper-mems",
+			"this store requires glia >= %s (binary is %s): please upgrade glia",
 			storeMin, binaryVersion,
 		)
 	}
