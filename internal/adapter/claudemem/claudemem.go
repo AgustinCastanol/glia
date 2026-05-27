@@ -96,6 +96,11 @@ type Config struct {
 	// Author is pre-resolved from identity.Resolve() by the wiring helper.
 	// If empty, New() resolves it via identity.Resolve("").
 	Author string
+	// WriteEnabled controls whether write operations are permitted. When false,
+	// WriteNative returns ErrUnsupported and WriteCapability returns the
+	// "read-only (write_enabled=false)" string. Defaults to true when not set
+	// by the wiring layer; the wiring layer reads this from config.ClaudeMemProviderConfig.WriteEnabled.
+	WriteEnabled bool
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +523,25 @@ func (a *ClaudeMemAdapter) FromCanonical(canonical store.CanonicalRecord) (adapt
 // surface in v1 (REQ-CM-03, ADR-10).
 func (a *ClaudeMemAdapter) WriteNative(ctx context.Context, record adapter.NativeRecord) (adapter.NativeID, error) {
 	return "", fmt.Errorf("%w", adapter.ErrUnsupported)
+}
+
+// WriteCapability returns a human-readable string describing this adapter's
+// write support level (REQ-CMW-03).
+//
+// Decision order:
+//  1. cfg.WriteEnabled == false → "read-only (write_enabled=false)"
+//  2. transport.WriteSupported returns false → "read-only (worker missing POST /api/memory/save)"
+//  3. otherwise → "read+write"
+//
+// If transport is nil, the probe cannot be run → "read-only (worker missing POST /api/memory/save)".
+func (a *ClaudeMemAdapter) WriteCapability() string {
+	if !a.cfg.WriteEnabled {
+		return "read-only (write_enabled=false)"
+	}
+	if a.transport == nil || !a.transport.WriteSupported(context.Background()) {
+		return "read-only (worker missing POST /api/memory/save)"
+	}
+	return "read+write"
 }
 
 // SupportedKinds returns nil, meaning all canonical kinds are attempted.

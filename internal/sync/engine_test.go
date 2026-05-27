@@ -71,7 +71,8 @@ func (f *fakeAdapter) WriteNative(_ context.Context, _ adapter.NativeRecord) (ad
 	return adapter.NativeID("written-id"), nil
 }
 
-func (f *fakeAdapter) SupportedKinds() []string { return nil }
+func (f *fakeAdapter) SupportedKinds() []string    { return nil }
+func (f *fakeAdapter) WriteCapability() string     { return "read+write" }
 
 // openTestStore opens a fresh store in a temp dir.
 func openTestStore(t *testing.T) (*store.Store, string) {
