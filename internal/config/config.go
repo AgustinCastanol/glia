@@ -39,6 +39,12 @@ type ClaudeMemProviderConfig struct {
 	HTTPBaseURL        string            `yaml:"http_base_url"`
 	WorkerPIDPath      string            `yaml:"worker_pid_path"`
 	ProjectPathMapping map[string]string `yaml:"project_path_mapping"`
+	// WriteEnabled controls whether glia will push canonical records back to the
+	// claude-mem worker via POST /api/memory/save. A pointer distinguishes
+	// "absent from config" (nil) from "explicitly set to false". Load fills nil
+	// to true so the effective value is always non-nil after Load returns.
+	// REQ-CMW-04.
+	WriteEnabled *bool `yaml:"write_enabled,omitempty"`
 }
 
 // SyncConfig holds sync-engine options. The extra fields are carry-overs from
@@ -74,6 +80,7 @@ type IdentityConfig struct {
 // Default returns the canonical default Config used as the bottom layer of
 // every merge. Callers must not mutate the returned value.
 func Default() *Config {
+	writeEnabled := true
 	return &Config{
 		SchemaVersion: 1,
 		Providers: ProvidersConfig{
@@ -89,6 +96,7 @@ func Default() *Config {
 				HTTPBaseURL:        "http://localhost:37701",
 				WorkerPIDPath:      "~/.claude-mem/worker.pid",
 				ProjectPathMapping: map[string]string{},
+				WriteEnabled:       &writeEnabled,
 			},
 		},
 		Sync: SyncConfig{
