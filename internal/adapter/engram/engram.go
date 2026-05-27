@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agustincastanol/glia/internal/adapter"
@@ -100,6 +101,16 @@ type EngramAdapter struct {
 	cfg       Config
 	commander Commander
 	transport Transport
+
+	// listCache holds full records read during the most recent ListNative call,
+	// indexed by NativeID. ReadNative consults this cache before falling back to
+	// CLI/HTTP. This works around engram v1.15.x: /observations/:id only accepts
+	// integer DB ids (not sync_ids) and `engram search` is FTS only — neither path
+	// can resolve a sync_id, so the only reliable source of the full record is the
+	// /export response that ListNative already consumes. Cleared at the start of
+	// each ListNative call so memory stays bounded to one sync's data.
+	cacheMu   sync.RWMutex
+	listCache map[adapter.NativeID]EngramRecord
 }
 
 // New constructs an EngramAdapter. transport is injected so that unit tests
@@ -252,6 +263,9 @@ func (a *EngramAdapter) ListNative(ctx context.Context, project string, since ti
 	// would wrongly exclude boundary records from incremental syncs).
 	sinceStr := since.UTC().Format(rfc3339NanoFixed)
 
+	// Reset the per-call cache that ReadNative consults.
+	freshCache := make(map[adapter.NativeID]EngramRecord, len(export.Observations))
+
 	var ids []adapter.NativeID
 	for _, obs := range export.Observations {
 		// Filter to the requested project.
@@ -275,8 +289,36 @@ func (a *EngramAdapter) ListNative(ctx context.Context, project string, since ti
 		if normalizedUpdatedAt < sinceStr {
 			continue
 		}
-		ids = append(ids, adapter.NativeID(obs.SyncID))
+		// Normalize the SQLite-format created_at to rfc3339NanoFixed so ToCanonical
+		// can re-normalize it without erroring on the missing 'T' separator. The
+		// updated_at variant is already normalized above as normalizedUpdatedAt.
+		normalizedCreatedAt, err := parseExportTimestamp(obs.CreatedAt)
+		if err != nil {
+			log.Printf("engram adapter: ListNative: skipping obs %q with unparseable created_at %q: %v", obs.SyncID, obs.CreatedAt, err)
+			continue
+		}
+
+		id := adapter.NativeID(obs.SyncID)
+		ids = append(ids, id)
+		freshCache[id] = EngramRecord{
+			ID:            obs.SyncID,
+			Title:         obs.Title,
+			Type:          obs.Type,
+			Content:       obs.Content,
+			ContentFormat: "markdown",
+			TopicKey:      obs.TopicKey,
+			SessionID:     obs.SessionID,
+			Scope:         obs.Scope,
+			Project:       obs.Project,
+			CreatedAt:     normalizedCreatedAt,
+			UpdatedAt:     normalizedUpdatedAt,
+		}
 	}
+
+	a.cacheMu.Lock()
+	a.listCache = freshCache
+	a.cacheMu.Unlock()
+
 	return ids, nil
 }
 
@@ -286,6 +328,17 @@ func (a *EngramAdapter) ListNative(ctx context.Context, project string, since ti
 //  2. HTTP Transport.GetByID fallback.
 //  3. Return ErrNotFound if both fail.
 func (a *EngramAdapter) ReadNative(ctx context.Context, id adapter.NativeID) (adapter.NativeRecord, error) {
+	// Step 0: in-memory cache from the last ListNative call. Engram v1.15.x does
+	// not expose a working sync_id lookup (CLI search is FTS only; /observations/:id
+	// only accepts integer DB ids). The /export response that ListNative already
+	// consumes is the only reliable source.
+	a.cacheMu.RLock()
+	cached, ok := a.listCache[id]
+	a.cacheMu.RUnlock()
+	if ok {
+		return cached, nil
+	}
+
 	// Step 1: CLI path — search by ID and match exactly.
 	stdout, _, err := a.commander.Run(ctx, "search", string(id), "--limit", "1")
 	if err == nil {
