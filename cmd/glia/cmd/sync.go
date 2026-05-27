@@ -163,13 +163,21 @@ func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
 
 	cfg := toEngineConfig(loadedConfig)
 
+	// Project resolution: --project flag overrides config.yaml's project field
+	// (REQ-CFG-02 layering). Empty flag falls back to the loaded config, which
+	// is what claude-mem's strict project equality filter (REQ-CM-07) expects.
+	project := rootFlags.project
+	if project == "" {
+		project = loadedConfig.Project
+	}
+
 	opts := enginesync.Options{
 		DryRun:         syncFlags.dryRun,
 		ProviderFilter: syncFlags.providers,
 		Max:            syncFlags.max,
 		Verbose:        rootFlags.verbose,
 		Commit:         syncFlags.commit,
-		Project:        rootFlags.project,
+		Project:        project,
 	}
 
 	// --mirror-engram flag overrides config; --no-mirror suppresses it.
