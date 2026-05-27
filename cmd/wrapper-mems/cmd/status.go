@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -74,6 +75,11 @@ func runStatus(cmd *cobra.Command, _ []string) {
 		os.Exit(2)
 	}
 	defer s.Close()
+
+	if err := enforceMinVersion(filepath.Join(dir, ".wrapper-mems")); err != nil {
+		fmt.Fprintln(os.Stderr, "status:", err)
+		os.Exit(1)
+	}
 
 	// Load full config once for both adapter wiring and engine config (T-3.7: removes
 	// the redundant legacy enginesync.Load() call — WARNING-03 from PR-A verify-report).

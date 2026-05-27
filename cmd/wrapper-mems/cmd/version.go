@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/spf13/cobra"
+
+	"github.com/agustincastanol/wrapper-mems/internal/config"
+	"github.com/agustincastanol/wrapper-mems/internal/store"
 )
 
 // Version is the binary version string. The default "dev" is used for local
@@ -34,4 +39,18 @@ func init() {
 func runVersion(cmd *cobra.Command, _ []string) {
 	fmt.Fprintf(cmd.OutOrStdout(),
 		"wrapper-mems %s (schema %s)\n", Version, SchemaVersionRange)
+}
+
+// enforceMinVersion reads schema.json from storeDir and refuses to proceed if
+// its wrapper_mems_min_version exceeds the binary Version (REQ-CFG-04). A
+// missing schema.json or empty min_version is permissive (returns nil).
+func enforceMinVersion(storeDir string) error {
+	info, err := store.ReadSchema(storeDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read schema: %w", err)
+	}
+	return config.Refuse(Version, info.WrapperMemsMinVersion)
 }
