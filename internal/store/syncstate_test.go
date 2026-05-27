@@ -258,3 +258,74 @@ func TestConflicts_ReturnsCopy(t *testing.T) {
 	got[0].CanonicalID = "mutated"
 	assert.Equal(t, c.CanonicalID, s.Conflicts()[0].CanonicalID)
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 — ByProviderRevision and BindProviderWithRevision tests (REQ-CMW-05)
+// ---------------------------------------------------------------------------
+
+// TestBindProviderWithRevision_RecordsMapping verifies that after calling
+// BindProviderWithRevision, both ByProvider and ByProviderRevision are updated.
+func TestBindProviderWithRevision_RecordsMapping(t *testing.T) {
+	s := openTempStore(t)
+
+	err := s.BindProviderWithRevision("claude-mem", "native-1", "canonical-abc", 2)
+	require.NoError(t, err)
+
+	// ByProvider lookup (backwards compat).
+	canonID, ok := s.ProviderNativeToCanonical("claude-mem", "native-1")
+	require.True(t, ok, "expected ByProvider mapping to be set")
+	assert.Equal(t, "canonical-abc", canonID)
+
+	// ByProviderRevision lookup.
+	rev, ok := s.ProviderRevision("claude-mem", "canonical-abc")
+	require.True(t, ok, "expected ByProviderRevision mapping to be set")
+	assert.Equal(t, 2, rev)
+}
+
+// TestBindProviderWithRevision_Overwrite verifies that a second call updates
+// both maps atomically (no partial-write window).
+func TestBindProviderWithRevision_Overwrite(t *testing.T) {
+	s := openTempStore(t)
+
+	require.NoError(t, s.BindProviderWithRevision("engram", "n1", "c1", 1))
+	require.NoError(t, s.BindProviderWithRevision("engram", "n1", "c1", 3))
+
+	rev, ok := s.ProviderRevision("engram", "c1")
+	require.True(t, ok)
+	assert.Equal(t, 3, rev)
+}
+
+// TestByProviderRevision_BackwardCompat verifies that an index loaded from a
+// pre-Phase4 index.json (nil ByProviderRevision map) does not panic and returns
+// (0, false) for any lookup.
+func TestByProviderRevision_BackwardCompat(t *testing.T) {
+	s := openTempStore(t)
+
+	// Simulate an old index that has ByProvider but not ByProviderRevision by
+	// calling only BindProvider (old code path).
+	require.NoError(t, s.BindProvider("engram", "n1", "c1"))
+
+	rev, ok := s.ProviderRevision("engram", "c1")
+	assert.False(t, ok, "expected ok=false for record bound without revision")
+	assert.Equal(t, 0, rev)
+}
+
+// TestBindProviderWithRevision_MultiProvider verifies isolation between providers.
+func TestBindProviderWithRevision_MultiProvider(t *testing.T) {
+	s := openTempStore(t)
+
+	require.NoError(t, s.BindProviderWithRevision("engram", "en1", "c1", 5))
+	require.NoError(t, s.BindProviderWithRevision("claude-mem", "cm1", "c2", 7))
+
+	r1, ok1 := s.ProviderRevision("engram", "c1")
+	r2, ok2 := s.ProviderRevision("claude-mem", "c2")
+
+	require.True(t, ok1)
+	require.True(t, ok2)
+	assert.Equal(t, 5, r1)
+	assert.Equal(t, 7, r2)
+
+	// Cross-provider: engram does not bleed into claude-mem lookup.
+	_, crossOK := s.ProviderRevision("engram", "c2")
+	assert.False(t, crossOK)
+}
