@@ -30,7 +30,10 @@ var rootCmd = &cobra.Command{
 	Long: `wrapper-mems synchronises observations between a local append-only canonical
 store (.wrapper-mems/) and registered memory providers such as engram and claude-mem.
 
-Run 'wrapper-mems init' first to initialise the store in the current directory.`,
+Run 'wrapper-mems init' first to initialise the store in the current directory.
+
+No telemetry is collected. Ever. wrapper-mems never transmits usage data, crash
+reports, or analytics to any external endpoint. (REQ-TEL-01)`,
 	SilenceErrors: true,
 	SilenceUsage:  true,
 }
