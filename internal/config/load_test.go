@@ -279,3 +279,100 @@ func TestLoad_IdentityFromUserConfig(t *testing.T) {
 		t.Errorf("Identity.Author: got %q, want %q", cfg.Identity.Author, "alice")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 — WriteEnabled *bool four-layer merge tests (REQ-CMW-04)
+// ---------------------------------------------------------------------------
+
+// boolPtr is a test helper to create a *bool inline.
+func boolPtr(b bool) *bool { return &b }
+
+// TestWriteEnabled_DefaultIsTrue verifies that when write_enabled is absent from
+// all config layers, the merged value defaults to true (pointer non-nil, value true).
+func TestWriteEnabled_DefaultIsTrue(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "schema_version: 1\nproject: proj\n")
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.ClaudeMem.WriteEnabled == nil {
+		t.Fatal("WriteEnabled should not be nil after load; want non-nil *bool")
+	}
+	if !*cfg.Providers.ClaudeMem.WriteEnabled {
+		t.Errorf("WriteEnabled default: got false, want true")
+	}
+}
+
+// TestWriteEnabled_ProjectConfigSetsFalse verifies that write_enabled: false in
+// the project config overrides the default true.
+func TestWriteEnabled_ProjectConfigSetsFalse(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: proj
+providers:
+  claude-mem:
+    write_enabled: false
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.ClaudeMem.WriteEnabled == nil {
+		t.Fatal("WriteEnabled is nil, want *false")
+	}
+	if *cfg.Providers.ClaudeMem.WriteEnabled {
+		t.Errorf("WriteEnabled: got true, want false (project config sets false)")
+	}
+}
+
+// TestWriteEnabled_UserConfigOverridesProject verifies that write_enabled in the
+// user config overrides the project config value.
+func TestWriteEnabled_UserConfigOverridesProject(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: proj
+providers:
+  claude-mem:
+    write_enabled: false
+`)
+	userPath := filepath.Join(t.TempDir(), "user.yaml")
+	writeUserConfig(t, userPath, "providers:\n  claude-mem:\n    write_enabled: true\n")
+
+	cfg, err := Load(dir, userPath)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.ClaudeMem.WriteEnabled == nil {
+		t.Fatal("WriteEnabled is nil, want *true")
+	}
+	if !*cfg.Providers.ClaudeMem.WriteEnabled {
+		t.Errorf("WriteEnabled: got false, want true (user config overrides project)")
+	}
+}
+
+// TestWriteEnabled_AbsentKeyDoesNotOverride verifies that an absent write_enabled
+// in the project config does not replace a previously set value (two-pass merge rule).
+func TestWriteEnabled_AbsentKeyDoesNotOverride(t *testing.T) {
+	// Project config does NOT mention write_enabled; default (true) must hold.
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: proj
+providers:
+  claude-mem:
+    enabled: true
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.ClaudeMem.WriteEnabled == nil {
+		t.Fatal("WriteEnabled is nil, want *true (default preserved when key absent)")
+	}
+	if !*cfg.Providers.ClaudeMem.WriteEnabled {
+		t.Errorf("WriteEnabled: got false, want true (absent key must not override default)")
+	}
+}
