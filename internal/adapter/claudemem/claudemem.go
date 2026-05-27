@@ -276,7 +276,6 @@ func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since
 
 	const pageLimit = 100
 	var ids []adapter.NativeID
-	firstObsLogged := false
 
 	for offset := 0; ; offset += pageLimit {
 		if err := ctx.Err(); err != nil {
@@ -300,11 +299,6 @@ func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since
 				continue
 			}
 			rec.Raw = raw
-
-			if !firstObsLogged {
-				log.Printf("claude-mem adapter: first observation raw JSON: %s", rec.Raw)
-				firstObsLogged = true
-			}
 
 			// REQ-CM-07: strict project equality filter on the `project` field
 			// (project name, NOT path — verified 2026-05-20).
