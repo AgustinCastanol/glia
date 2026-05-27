@@ -6,12 +6,19 @@ import (
 	"os"
 )
 
-// recoverPartialLine inspects f for a partial trailing line (no terminating '\n').
+// RecoverPartialLine inspects f for a partial trailing line (no terminating '\n').
 // If found, it truncates the file to the position after the last '\n'.
 // If no '\n' exists anywhere in the file, it truncates to 0.
 // Returns the number of bytes discarded (0 means the file was already clean).
 // The file must be opened O_RDWR. After return the file offset is undefined;
 // callers should close and re-open for append.
+//
+// Exported so that doctor --fix can invoke partial-line recovery on memory.jsonl
+// without opening the store (which acquires the advisory lock). REQ-DOC-03.
+func RecoverPartialLine(f *os.File) (int64, error) {
+	return recoverPartialLine(f)
+}
+
 func recoverPartialLine(f *os.File) (int64, error) {
 	info, err := f.Stat()
 	if err != nil {
