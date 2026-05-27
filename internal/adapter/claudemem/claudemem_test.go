@@ -354,6 +354,12 @@ func (panicTransport) ListPage(_ context.Context, _, _ int) ([]byte, error) {
 func (panicTransport) GetByID(_ context.Context, _ string) ([]byte, bool, error) {
 	panic("ToCanonical/FromCanonical must not call Transport.GetByID")
 }
+func (panicTransport) SaveMemory(_ context.Context, _ SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	panic("ToCanonical/FromCanonical must not call Transport.SaveMemory")
+}
+func (panicTransport) WriteSupported(_ context.Context) bool {
+	panic("ToCanonical/FromCanonical must not call Transport.WriteSupported")
+}
 
 // fakeIDMap is a minimal adapter.IDMap for unit testing.
 type fakeIDMap struct {
@@ -972,6 +978,14 @@ func (f *fakeTransport) GetByID(_ context.Context, id string) ([]byte, bool, err
 		return f.getByIDBody, true, nil
 	}
 	return nil, false, adapter.ErrNotFound
+}
+
+func (f *fakeTransport) SaveMemory(_ context.Context, _ SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	return nil, fmt.Errorf("fakeTransport: SaveMemory not configured")
+}
+
+func (f *fakeTransport) WriteSupported(_ context.Context) bool {
+	return false
 }
 
 // makeRawItem encodes a claudeMemRecord as a json.RawMessage for use in fakeTransport pages.
