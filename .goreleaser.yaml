@@ -1,0 +1,80 @@
+version: 2
+
+project_name: glia
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: glia
+    main: ./cmd/glia
+    binary: glia
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/agustincastanol/glia/cmd/glia/cmd.Version={{ .Version }}
+
+archives:
+  - id: glia
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-next'
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: 'Features'
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: 'Bug fixes'
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: 'Refactoring'
+      regexp: '^.*?refactor(\(.+\))??!?:.+$'
+      order: 2
+    - title: 'Tests'
+      regexp: '^.*?test(\(.+\))??!?:.+$'
+      order: 3
+    - title: 'Documentation'
+      regexp: '^.*?docs(\(.+\))??!?:.+$'
+      order: 4
+    - title: 'Chores'
+      regexp: '^.*?chore(\(.+\))??!?:.+$'
+      order: 99
+  filters:
+    exclude:
+      - '^Merge'
+      - '^chore: bump'
+
+release:
+  github:
+    owner: AgustinCastanol
+    name: glia
+  draft: false
+  prerelease: auto
+  name_template: 'v{{ .Version }}'
