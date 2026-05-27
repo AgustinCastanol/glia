@@ -70,6 +70,8 @@ func (f *pushFakeAdapter) WriteNative(_ context.Context, _ adapter.NativeRecord)
 	return "written-id", nil
 }
 
+func (f *pushFakeAdapter) WriteCapability() string { return "read+write" }
+
 func openPushStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -305,3 +307,5 @@ func (f *countingReadAdapter) FromCanonical(r store.CanonicalRecord) (adapter.Na
 func (f *countingReadAdapter) WriteNative(_ context.Context, _ adapter.NativeRecord) (adapter.NativeID, error) {
 	return "written-id", nil
 }
+
+func (f *countingReadAdapter) WriteCapability() string { return "read+write" }

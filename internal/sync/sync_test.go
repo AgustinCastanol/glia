@@ -58,6 +58,8 @@ func (f *bidiFakeAdapter) WriteNative(_ context.Context, rec adapter.NativeRecor
 	return adapter.NativeID("nat-" + m["canonical_id"]), nil
 }
 
+func (f *bidiFakeAdapter) WriteCapability() string { return "read+write" }
+
 func openSyncStore(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()

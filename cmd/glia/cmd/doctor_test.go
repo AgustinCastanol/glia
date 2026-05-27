@@ -80,7 +80,8 @@ func (s *stubAdapter) FromCanonical(_ store.CanonicalRecord) (adapter.NativeReco
 func (s *stubAdapter) WriteNative(_ context.Context, _ adapter.NativeRecord) (adapter.NativeID, error) {
 	return "", nil
 }
-func (s *stubAdapter) SupportedKinds() []string { return nil }
+func (s *stubAdapter) SupportedKinds() []string  { return nil }
+func (s *stubAdapter) WriteCapability() string   { return "read+write" }
 
 // --- checkCanonicalStore ----------------------------------------------------
 

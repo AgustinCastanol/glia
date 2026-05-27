@@ -167,3 +167,5 @@ func (a *minimalAdapter) FromCanonical(_ store.CanonicalRecord) (adapter.NativeR
 func (a *minimalAdapter) WriteNative(_ context.Context, _ adapter.NativeRecord) (adapter.NativeID, error) {
 	return "", adapter.ErrUnsupported
 }
+
+func (a *minimalAdapter) WriteCapability() string { return "read+write" }
