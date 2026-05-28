@@ -1674,4 +1674,49 @@ func TestWriteNative_TextFormatting(t *testing.T) {
 	if !strings.Contains(text, "My content body.") {
 		t.Errorf("payload text should contain narrative, got: %q", text)
 	}
+	if want := "My Title\n\nMy content body."; text != want {
+		t.Errorf("payload text mismatch: got %q, want %q", text, want)
+	}
+}
+
+// TestWriteNative_TextFormatting_TitleOnly verifies the SaveMemory payload
+// falls back to bare title when narrative is empty (REQ-CMW-04).
+func TestWriteNative_TextFormatting_TitleOnly(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 100},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{Title: "Only the title", Narrative: ""}
+	if _, err := a.WriteNative(context.Background(), native); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(tr.saveMemoryCalls))
+	}
+	if got, want := tr.saveMemoryCalls[0].Text, "Only the title"; got != want {
+		t.Errorf("payload text mismatch: got %q, want %q", got, want)
+	}
+}
+
+// TestWriteNative_TextFormatting_NarrativeOnly verifies the SaveMemory payload
+// falls back to bare narrative when title is empty (REQ-CMW-04).
+func TestWriteNative_TextFormatting_NarrativeOnly(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 101},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{Title: "", Narrative: "Just the body."}
+	if _, err := a.WriteNative(context.Background(), native); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(tr.saveMemoryCalls))
+	}
+	if got, want := tr.saveMemoryCalls[0].Text, "Just the body."; got != want {
+		t.Errorf("payload text mismatch: got %q, want %q", got, want)
+	}
 }
