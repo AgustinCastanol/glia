@@ -45,6 +45,10 @@ type StatusReport struct {
 	// A nil value means the provider is healthy.
 	ProviderHealth map[string]error
 
+	// ProviderWriteCapability maps provider name to its WriteCapability() string
+	// (REQ-CMW-09). Populated during Engine.Status for display in glia status.
+	ProviderWriteCapability map[string]string
+
 	// Conflicts is the current conflict list from the store.
 	Conflicts []ConflictSummary
 }

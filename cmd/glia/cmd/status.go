@@ -29,6 +29,9 @@ type statusJSON struct {
 	// ProviderHealth maps provider name to health error string (empty string = healthy).
 	ProviderHealth map[string]string `json:"provider_health"`
 
+	// WriteCapability maps provider name to its write capability string (REQ-CMW-09).
+	WriteCapability map[string]string `json:"write_capability"`
+
 	// Conflicts is the current unresolved conflict list.
 	Conflicts []enginesync.ConflictSummary `json:"conflicts"`
 
@@ -117,7 +120,7 @@ func runStatus(cmd *cobra.Command, _ []string) {
 	tw := newTabWriter(w)
 
 	// Header.
-	fmt.Fprintln(tw, "PROVIDER\tSTATUS\tLAST_PUSHED\tLAST_PULLED")
+	fmt.Fprintln(tw, "PROVIDER\tSTATUS\tWRITE_CAPABILITY\tLAST_PUSHED\tLAST_PULLED")
 
 	anyDegraded := false
 	for _, name := range sortedKeys(report.ProviderHealth) {
@@ -127,9 +130,15 @@ func runStatus(cmd *cobra.Command, _ []string) {
 			status = "degraded: " + healthErr.Error()
 			anyDegraded = true
 		}
+		writeCap := "-"
+		if report.ProviderWriteCapability != nil {
+			if cap, ok := report.ProviderWriteCapability[name]; ok && cap != "" {
+				writeCap = cap
+			}
+		}
 		ps, _ := s.SyncState(name)
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
-			name, status,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			name, status, writeCap,
 			dashIfEmpty(ps.LastPushedAt),
 			dashIfEmpty(ps.LastPulledAt),
 		)
@@ -191,6 +200,14 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSO
 		}
 	}
 
+	// REQ-CMW-09: write capability per provider.
+	writeCap := make(map[string]string, len(report.ProviderHealth))
+	for name := range report.ProviderHealth {
+		if report.ProviderWriteCapability != nil {
+			writeCap[name] = report.ProviderWriteCapability[name]
+		}
+	}
+
 	syncState := make(map[string]store.ProviderSyncState)
 	for name := range report.ProviderHealth {
 		ps, _ := s.SyncState(name)
@@ -208,12 +225,13 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSO
 	}
 
 	return statusJSON{
-		ProviderHealth: health,
-		Conflicts:      conflicts,
-		SyncState:      syncState,
-		LineCount:      st.LineCount,
-		FileSizeBytes:  st.FileSizeBytes,
-		SchemaVersion:  st.SchemaVersion,
+		ProviderHealth:  health,
+		WriteCapability: writeCap,
+		Conflicts:       conflicts,
+		SyncState:       syncState,
+		LineCount:       st.LineCount,
+		FileSizeBytes:   st.FileSizeBytes,
+		SchemaVersion:   st.SchemaVersion,
 	}, nil
 }
 
