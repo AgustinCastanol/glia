@@ -48,6 +48,14 @@ func (f *fakeFilterTransport) GetByID(_ context.Context, _ string) ([]byte, bool
 	return nil, false, adapter.ErrUnsupported
 }
 
+func (f *fakeFilterTransport) SaveMemory(_ context.Context, _ SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	return nil, adapter.ErrUnsupported
+}
+
+func (f *fakeFilterTransport) WriteSupported(_ context.Context) bool {
+	return false
+}
+
 // makeMinimalRec returns a minimal claudeMemRecord with the given session and project.
 func makeMinimalRec(id int64, sessionID, project string) claudeMemRecord {
 	return claudeMemRecord{

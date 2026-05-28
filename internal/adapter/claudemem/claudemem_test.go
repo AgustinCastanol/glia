@@ -354,6 +354,12 @@ func (panicTransport) ListPage(_ context.Context, _, _ int) ([]byte, error) {
 func (panicTransport) GetByID(_ context.Context, _ string) ([]byte, bool, error) {
 	panic("ToCanonical/FromCanonical must not call Transport.GetByID")
 }
+func (panicTransport) SaveMemory(_ context.Context, _ SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	panic("ToCanonical/FromCanonical must not call Transport.SaveMemory")
+}
+func (panicTransport) WriteSupported(_ context.Context) bool {
+	panic("ToCanonical/FromCanonical must not call Transport.WriteSupported")
+}
 
 // fakeIDMap is a minimal adapter.IDMap for unit testing.
 type fakeIDMap struct {
@@ -974,6 +980,14 @@ func (f *fakeTransport) GetByID(_ context.Context, id string) ([]byte, bool, err
 	return nil, false, adapter.ErrNotFound
 }
 
+func (f *fakeTransport) SaveMemory(_ context.Context, _ SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	return nil, fmt.Errorf("fakeTransport: SaveMemory not configured")
+}
+
+func (f *fakeTransport) WriteSupported(_ context.Context) bool {
+	return false
+}
+
 // makeRawItem encodes a claudeMemRecord as a json.RawMessage for use in fakeTransport pages.
 // Uses verified live field names: numeric id, project (name), created_at as the
 // since-filter source (no updated_at exists in the API — D7).
@@ -1468,4 +1482,64 @@ func isUnsupported(err error) bool {
 
 func containsErr(err error, target error) bool {
 	return errors.Is(err, target)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — WriteCapability tests (REQ-CMW-03)
+// ---------------------------------------------------------------------------
+
+// writeCapTransport is a minimal Transport that returns a configurable
+// WriteSupported result. All other methods delegate to fakeTransport no-ops.
+type writeCapTransport struct {
+	fakeTransport
+	writeSupported bool
+}
+
+func (w *writeCapTransport) WriteSupported(_ context.Context) bool {
+	return w.writeSupported
+}
+
+// TestWriteCapability_WriteEnabledFalse verifies the config gate takes priority.
+func TestWriteCapability_WriteEnabledFalse(t *testing.T) {
+	tr := &writeCapTransport{writeSupported: true}
+	a := New(Config{WriteEnabled: false}, tr)
+	got := a.WriteCapability()
+	want := "read-only (write_enabled=false)"
+	if got != want {
+		t.Errorf("WriteCapability: got %q, want %q", got, want)
+	}
+}
+
+// TestWriteCapability_WriteEnabledTrueProbeTrue verifies "read+write" when config
+// and probe both allow writes.
+func TestWriteCapability_WriteEnabledTrueProbeTrue(t *testing.T) {
+	tr := &writeCapTransport{writeSupported: true}
+	a := New(Config{WriteEnabled: true}, tr)
+	got := a.WriteCapability()
+	want := "read+write"
+	if got != want {
+		t.Errorf("WriteCapability: got %q, want %q", got, want)
+	}
+}
+
+// TestWriteCapability_WriteEnabledTrueProbeFailure verifies the endpoint-missing
+// string when config enables writes but the worker doesn't expose the route.
+func TestWriteCapability_WriteEnabledTrueProbeFailure(t *testing.T) {
+	tr := &writeCapTransport{writeSupported: false}
+	a := New(Config{WriteEnabled: true}, tr)
+	got := a.WriteCapability()
+	want := "read-only (worker missing POST /api/memory/save)"
+	if got != want {
+		t.Errorf("WriteCapability: got %q, want %q", got, want)
+	}
+}
+
+// TestWriteCapability_NilTransport verifies nil transport → endpoint-missing string.
+func TestWriteCapability_NilTransport(t *testing.T) {
+	a := New(Config{WriteEnabled: true}, nil)
+	got := a.WriteCapability()
+	want := "read-only (worker missing POST /api/memory/save)"
+	if got != want {
+		t.Errorf("WriteCapability: got %q, want %q", got, want)
+	}
 }

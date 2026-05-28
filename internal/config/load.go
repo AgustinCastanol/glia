@@ -54,6 +54,13 @@ func Load(projectDir, userConfigPath string) (*Config, error) {
 	// Step 4: env overlay.
 	envOverlay(cfg, os.Getenv)
 
+	// Step 4b: default-fill pointer fields that remain nil after all merges.
+	// WriteEnabled defaults to true when absent from every config layer (REQ-CMW-04).
+	if cfg.Providers.ClaudeMem.WriteEnabled == nil {
+		t := true
+		cfg.Providers.ClaudeMem.WriteEnabled = &t
+	}
+
 	// Step 5: path expansion.
 	expandPaths(cfg)
 
@@ -219,6 +226,11 @@ func mergeClaudeMem(dst *ClaudeMemProviderConfig, src *ClaudeMemProviderConfig, 
 		for k, v := range src.ProjectPathMapping {
 			dst.ProjectPathMapping[k] = v
 		}
+	}
+	// Pointer field: only overwrite when key is explicitly present in the YAML.
+	// This preserves the default (true) when the key is absent.
+	if _, ok := m["write_enabled"]; ok {
+		dst.WriteEnabled = src.WriteEnabled
 	}
 }
 

@@ -60,6 +60,8 @@ func (f *pullFakeAdapter) WriteNative(_ context.Context, rec adapter.NativeRecor
 	return adapter.NativeID("native-" + m["canonical_id"]), nil
 }
 
+func (f *pullFakeAdapter) WriteCapability() string { return "read+write" }
+
 func seedCanonical(t *testing.T, s *store.Store, records []store.CanonicalRecord) []store.CanonicalRecord {
 	t.Helper()
 	out, err := s.AppendBatch(records)

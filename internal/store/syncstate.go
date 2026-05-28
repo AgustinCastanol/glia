@@ -127,3 +127,74 @@ func (s *Store) BindProvider(provider, nativeID, canonicalID string) error {
 	idxPath := filepath.Join(s.rootDir, indexFilename)
 	return s.idx.persist(idxPath)
 }
+
+// BindProviderWithRevision records a native-ID ↔ canonical-ID mapping AND
+// the last-pushed revision for the given provider atomically in a single
+// persist call (REQ-CMW-05, D2). Avoids the partial-write window that would
+// exist if BindProvider and a separate revision-update were two separate calls.
+func (s *Store) BindProviderWithRevision(provider, nativeID, canonicalID string, revision int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return fmt.Errorf("store: closed")
+	}
+
+	// ByProvider — native → canonical.
+	if s.idx.ByProvider == nil {
+		s.idx.ByProvider = make(map[string]map[string]string)
+	}
+	if s.idx.ByProvider[provider] == nil {
+		s.idx.ByProvider[provider] = make(map[string]string)
+	}
+	s.idx.ByProvider[provider][nativeID] = canonicalID
+
+	// ByProviderRevision — canonical → revision (lazy init, nil-safe for old indexes).
+	if s.idx.ByProviderRevision == nil {
+		s.idx.ByProviderRevision = make(map[string]map[string]int)
+	}
+	if s.idx.ByProviderRevision[provider] == nil {
+		s.idx.ByProviderRevision[provider] = make(map[string]int)
+	}
+	s.idx.ByProviderRevision[provider][canonicalID] = revision
+
+	idxPath := filepath.Join(s.rootDir, indexFilename)
+	return s.idx.persist(idxPath)
+}
+
+// ProviderRevision returns the last-pushed revision for canonicalID in the
+// given provider. Returns (0, false) when no revision has been recorded (either
+// because the record was never pushed, or the index was created before Phase 4).
+// Safe for concurrent use.
+func (s *Store) ProviderRevision(provider, canonicalID string) (int, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx.ByProviderRevision == nil {
+		return 0, false
+	}
+	provMap, ok := s.idx.ByProviderRevision[provider]
+	if !ok {
+		return 0, false
+	}
+	rev, ok := provMap[canonicalID]
+	return rev, ok
+}
+
+// ProviderNativeToCanonical returns the canonical ID for the given native ID in
+// the given provider. Returns ("", false) when no mapping exists.
+// Safe for concurrent use.
+func (s *Store) ProviderNativeToCanonical(provider, nativeID string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx.ByProvider == nil {
+		return "", false
+	}
+	provMap, ok := s.idx.ByProvider[provider]
+	if !ok {
+		return "", false
+	}
+	canonID, ok := provMap[nativeID]
+	return canonID, ok
+}

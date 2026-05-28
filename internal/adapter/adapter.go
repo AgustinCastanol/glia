@@ -92,4 +92,18 @@ type Adapter interface {
 	// handle via FromCanonical/WriteNative. An empty slice means "all kinds".
 	// Pull uses this to skip unsupported record types before calling FromCanonical.
 	SupportedKinds() []string
+
+	// WriteCapability returns a human-readable string describing this adapter's
+	// write support. Possible values:
+	//   "read+write"                                  — writes are fully supported
+	//   "read-only (write_enabled=false)"             — disabled by config
+	//   "read-only (worker missing POST /api/memory/save)" — endpoint probe returned false
+	//   "read-only"                                   — provider has no write surface
+	// REQ-CMW-03.
+	WriteCapability() string
 }
+
+// WriteCapabilityAdapter is a named helper type used in compile-time assertions
+// to verify that WriteCapability() string satisfies the expected interface shape.
+// It is never instantiated at runtime.
+type WriteCapabilityAdapter struct{ Adapter }
