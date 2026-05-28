@@ -238,3 +238,122 @@ func TestPull_FromCanonicalErrUnsupportedSkips(t *testing.T) {
 		t.Errorf("hard errors=%d, want 0", len(report.HardErrors))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 — drift detection and BindProviderWithRevision (REQ-CMW-06/07)
+// ---------------------------------------------------------------------------
+
+// TestPull_DriftDetection_SkipsAlreadyPushedRevision verifies that a canonical
+// record whose revision was already pushed to the provider (ProviderRevision
+// returns the same revision) is skipped without calling WriteNative again
+// (REQ-CMW-07).
+func TestPull_DriftDetection_SkipsAlreadyPushedRevision(t *testing.T) {
+	s, _ := openPullStore(t)
+
+	seeded := seedCanonical(t, s, []store.CanonicalRecord{
+		{Kind: "observation", Title: "already-pushed", ContentFormat: "markdown",
+			Revision:  2,
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Origin:    store.Origin{Provider: "other", ProviderID: "x1"}},
+	})
+
+	// Simulate that revision 2 was already pushed to "engram".
+	if err := s.BindProviderWithRevision("engram", "native-already", seeded[0].CanonicalID, 2); err != nil {
+		t.Fatalf("BindProviderWithRevision: %v", err)
+	}
+
+	a := &pullFakeAdapter{name: "engram"}
+	e := New(s, map[string]adapter.Adapter{"engram": a}, Default(), Options{}, nil)
+
+	report, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	// Already pushed at revision 2 → skip, pulled=0.
+	pr := report.PerProvider["engram"]
+	if pr.Pulled != 0 {
+		t.Errorf("pulled=%d, want 0 (drift detection: already at revision 2)", pr.Pulled)
+	}
+	if len(a.written) != 0 {
+		t.Errorf("WriteNative called %d times, want 0 (already pushed at revision 2)", len(a.written))
+	}
+}
+
+// TestPull_DriftDetection_PushesWhenRevisionAdvanced verifies that a record
+// at a higher revision than what was previously pushed IS written (REQ-CMW-07).
+// Seeds a two-revision chain so the live record is revision 2; previously
+// pushed at revision 1 → engine must write again.
+func TestPull_DriftDetection_PushesWhenRevisionAdvanced(t *testing.T) {
+	s, _ := openPullStore(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Seed revision 1.
+	seeded := seedCanonical(t, s, []store.CanonicalRecord{
+		{Kind: "observation", Title: "needs-update", ContentFormat: "markdown",
+			UpdatedAt: now,
+			Origin:    store.Origin{Provider: "other", ProviderID: "x2"}},
+	})
+
+	// Append revision 2 to the same canonical chain.
+	seeded2, err := s.AppendBatch([]store.CanonicalRecord{
+		{CanonicalID: seeded[0].CanonicalID,
+			Kind: "observation", Title: "needs-update-v2", ContentFormat: "markdown",
+			UpdatedAt: now,
+			Origin:    store.Origin{Provider: "other", ProviderID: "x2"}},
+	})
+	if err != nil {
+		t.Fatalf("AppendBatch revision 2: %v", err)
+	}
+
+	// Simulate: previously pushed at revision 1, live record is now revision 2.
+	if err := s.BindProviderWithRevision("engram", "native-old", seeded2[0].CanonicalID, 1); err != nil {
+		t.Fatalf("BindProviderWithRevision: %v", err)
+	}
+
+	a := &pullFakeAdapter{name: "engram"}
+	e := New(s, map[string]adapter.Adapter{"engram": a}, Default(), Options{}, nil)
+
+	report, err2 := e.Pull(context.Background())
+	if err2 != nil {
+		t.Fatalf("Pull: %v", err2)
+	}
+
+	// Revision advanced (1 → 2) → should write.
+	pr := report.PerProvider["engram"]
+	if pr.Pulled != 1 {
+		t.Errorf("pulled=%d, want 1 (revision advanced from 1 to 2)", pr.Pulled)
+	}
+}
+
+// TestPull_BindsWithRevisionAfterWrite verifies that after a successful
+// WriteNative, the engine calls BindProviderWithRevision (not just BindProvider)
+// so the revision watermark is recorded (REQ-CMW-05).
+// The store assigns revision=1 to any new record, so the expected watermark is 1.
+func TestPull_BindsWithRevisionAfterWrite(t *testing.T) {
+	s, _ := openPullStore(t)
+
+	seeded := seedCanonical(t, s, []store.CanonicalRecord{
+		{Kind: "observation", Title: "bind-test", ContentFormat: "markdown",
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Origin:    store.Origin{Provider: "other", ProviderID: "x3"}},
+	})
+
+	a := &pullFakeAdapter{name: "engram"}
+	e := New(s, map[string]adapter.Adapter{"engram": a}, Default(), Options{}, nil)
+
+	_, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	// After a successful write, ProviderRevision should record the canonical
+	// record's actual revision (1 for a freshly seeded record).
+	rev, ok := s.ProviderRevision("engram", seeded[0].CanonicalID)
+	if !ok {
+		t.Fatal("expected ProviderRevision to be set after pull write")
+	}
+	if rev != 1 {
+		t.Errorf("ProviderRevision: got %d, want 1", rev)
+	}
+}
