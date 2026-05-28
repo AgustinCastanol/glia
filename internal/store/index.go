@@ -87,6 +87,8 @@ func loadIndex(path string) (*index, error) {
 	if idx.Conflicts == nil {
 		idx.Conflicts = []ConflictEntry{}
 	}
+	// ByProviderRevision is intentionally left nil for old index.json files;
+	// ProviderRevision and BindProviderWithRevision handle nil maps to preserve backward compatibility.
 	return &idx, nil
 }
 
