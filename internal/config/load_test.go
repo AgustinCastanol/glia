@@ -281,6 +281,100 @@ func TestLoad_IdentityFromUserConfig(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// PRD-6 — Per-provider project field merge tests
+// ---------------------------------------------------------------------------
+
+// TestLoad_ProviderProjectParsed verifies that providers.engram.project and
+// providers.claude-mem.project are parsed when present in the project config.
+func TestLoad_ProviderProjectParsed(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: global
+providers:
+  engram:
+    project: glia-eng
+  claude-mem:
+    project: glia-cm
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.Engram.Project != "glia-eng" {
+		t.Errorf("Engram.Project: got %q, want %q", cfg.Providers.Engram.Project, "glia-eng")
+	}
+	if cfg.Providers.ClaudeMem.Project != "glia-cm" {
+		t.Errorf("ClaudeMem.Project: got %q, want %q", cfg.Providers.ClaudeMem.Project, "glia-cm")
+	}
+}
+
+// TestLoad_ProviderProjectAbsentIsEmpty verifies that absent provider.project
+// is treated as empty (no override).
+func TestLoad_ProviderProjectAbsentIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: global
+providers:
+  engram:
+    enabled: true
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.Engram.Project != "" {
+		t.Errorf("Engram.Project: got %q, want empty (absent key)", cfg.Providers.Engram.Project)
+	}
+}
+
+// TestLoad_ProviderProjectEmptyStringIsEmpty verifies that an explicit empty
+// string for provider.project is treated identically to absent.
+func TestLoad_ProviderProjectEmptyStringIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: global
+providers:
+  engram:
+    project: ""
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.Engram.Project != "" {
+		t.Errorf("Engram.Project: got %q, want empty (explicit empty string = no override)", cfg.Providers.Engram.Project)
+	}
+}
+
+// TestLoad_ProviderProjectUserOverridesProject verifies user config overrides
+// project config for the per-provider project field.
+func TestLoad_ProviderProjectUserOverridesProject(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: global
+providers:
+  engram:
+    project: proj-override
+`)
+	userPath := t.TempDir() + "/user.yaml"
+	writeUserConfig(t, userPath, `providers:
+  engram:
+    project: user-override
+`)
+
+	cfg, err := Load(dir, userPath)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Providers.Engram.Project != "user-override" {
+		t.Errorf("Engram.Project: got %q, want %q (user overrides project)", cfg.Providers.Engram.Project, "user-override")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Phase 3 — WriteEnabled *bool four-layer merge tests (REQ-CMW-04)
 // ---------------------------------------------------------------------------
 
