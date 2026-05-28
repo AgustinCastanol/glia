@@ -88,13 +88,13 @@ func TestWriteNative_Integration_200Success(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWriteNative_Integration_400PassThrough(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	srv := saveServer(t, func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		n := callCount.Add(1)
 		var req SaveMemoryRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 
-		if callCount == 1 {
+		if n == 1 {
 			// first call is the WriteSupported probe (empty text)
 			w.WriteHeader(http.StatusBadRequest)
 			return
