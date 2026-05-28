@@ -382,3 +382,89 @@ func TestStatusJSON_StoreStatsPopulated(t *testing.T) {
 		t.Error("schema_version: want > 0")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8 — write_capability in status output (REQ-CMW-09)
+// ---------------------------------------------------------------------------
+
+// TestStatus_TableIncludesWriteCapabilityColumn verifies that the status table
+// header contains a WRITE_CAPABILITY column (REQ-CMW-09).
+func TestStatus_TableIncludesWriteCapabilityColumn(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	out := executeStatus(t, dir, false)
+	if !strings.Contains(out, "WRITE_CAPABILITY") {
+		t.Errorf("expected WRITE_CAPABILITY column in status table, got:\n%s", out)
+	}
+}
+
+// TestStatusJSON_WriteCapabilityPresent verifies that buildStatusJSON includes
+// the write_capability map when ProviderWriteCapability is set (REQ-CMW-09).
+func TestStatusJSON_WriteCapabilityPresent(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{"engram": nil},
+		ProviderWriteCapability: map[string]string{
+			"engram": "read+write",
+		},
+	}
+
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if _, ok := m["write_capability"]; !ok {
+		t.Error("expected 'write_capability' key in JSON output")
+	}
+}
+
+// TestStatusJSON_WriteCapabilityValue verifies the write_capability value for
+// a provider is correctly propagated to the JSON output (REQ-CMW-09).
+func TestStatusJSON_WriteCapabilityValue(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{"claude-mem": nil},
+		ProviderWriteCapability: map[string]string{
+			"claude-mem": "read-only (write_enabled=false)",
+		},
+	}
+
+	out, err := buildStatusJSON(s, report)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	cap, ok := out.WriteCapability["claude-mem"]
+	if !ok {
+		t.Fatal("write_capability map missing claude-mem entry")
+	}
+	if cap != "read-only (write_enabled=false)" {
+		t.Errorf("write_capability[claude-mem] = %q, want %q", cap, "read-only (write_enabled=false)")
+	}
+}

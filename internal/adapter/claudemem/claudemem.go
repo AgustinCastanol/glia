@@ -196,7 +196,7 @@ func deriveTitle(source string) string {
 		return source
 	}
 	i := 0
-	for n := 0; n < titleMaxRunes; n++ {
+	for range titleMaxRunes {
 		_, size := utf8.DecodeRuneInString(source[i:])
 		i += size
 	}
@@ -519,10 +519,53 @@ func (a *ClaudeMemAdapter) FromCanonical(canonical store.CanonicalRecord) (adapt
 	}, nil
 }
 
-// WriteNative always returns ErrUnsupported. claude-mem has no public write
-// surface in v1 (REQ-CM-03, ADR-10).
+// WriteNative writes the native record to claude-mem via POST /api/memory/save
+// (REQ-CMW-04). Returns the assigned NativeID on success.
+//
+// Gate order:
+//  1. cfg.WriteEnabled == false → ErrUnsupported (skip all I/O)
+//  2. transport.WriteSupported returns false → ErrUnsupported
+//  3. record is not a claudeMemRecord → ErrUnsupported
+//  4. POST /api/memory/save → NativeID or error
+//
+// The request text is formatted as "Title\n\nNarrative" when both are
+// non-empty, or whichever is non-empty alone. This matches the format
+// expected by the claude-mem worker for session summaries.
 func (a *ClaudeMemAdapter) WriteNative(ctx context.Context, record adapter.NativeRecord) (adapter.NativeID, error) {
-	return "", fmt.Errorf("%w", adapter.ErrUnsupported)
+	// Gate 1: config gate.
+	if !a.cfg.WriteEnabled {
+		return "", fmt.Errorf("%w: write_enabled=false", adapter.ErrUnsupported)
+	}
+
+	// Gate 2: endpoint probe.
+	if a.transport == nil || !a.transport.WriteSupported(ctx) {
+		return "", fmt.Errorf("%w: worker missing POST /api/memory/save", adapter.ErrUnsupported)
+	}
+
+	// Gate 3: type assertion.
+	rec, ok := record.(claudeMemRecord)
+	if !ok {
+		return "", fmt.Errorf("%w: WriteNative expected claudeMemRecord, got %T", adapter.ErrUnsupported, record)
+	}
+
+	// Build the text payload. Format: "Title\n\nNarrative" when both present;
+	// fallback to whichever is non-empty.
+	var text string
+	switch {
+	case rec.Title != "" && rec.Narrative != "":
+		text = rec.Title + "\n\n" + rec.Narrative
+	case rec.Title != "":
+		text = rec.Title
+	default:
+		text = rec.Narrative
+	}
+
+	resp, err := a.transport.SaveMemory(ctx, SaveMemoryRequest{Text: text})
+	if err != nil {
+		return "", err
+	}
+
+	return adapter.NativeID(strconv.FormatInt(resp.ID, 10)), nil
 }
 
 // WriteCapability returns a human-readable string describing this adapter's

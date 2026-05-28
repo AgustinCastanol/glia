@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/agustincastanol/glia/internal/adapter"
@@ -73,7 +74,7 @@ func (e *Engine) pullProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 
 		// Step 4c: SupportedKinds filter (REQ-SE-29b).
 		supported := a.SupportedKinds()
-		if len(supported) > 0 && !containsString(supported, rec.Kind) {
+		if len(supported) > 0 && !slices.Contains(supported, rec.Kind) {
 			continue
 		}
 
@@ -88,7 +89,18 @@ func (e *Engine) pullProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 			continue
 		}
 
-		// Step 4e: WriteNative (dry-run gate).
+		// Step 4e.1: drift detection (REQ-CMW-07).
+		// If ProviderRevision already recorded a revision >= the current record
+		// revision, the record was already pushed at this revision — skip to
+		// avoid duplicates without treating it as an error.
+		if storedRev, hasPushed := e.store.ProviderRevision(a.Name(), rec.CanonicalID); hasPushed {
+			if storedRev >= rec.Revision {
+				// Already pushed at this (or a later) revision. Skip.
+				continue
+			}
+		}
+
+		// Step 4e.2: WriteNative (dry-run gate).
 		if e.opts.DryRun {
 			fmt.Fprintf(e.w, "DRY-RUN pull %s: would write %s\n", a.Name(), rec.CanonicalID)
 			result.Pulled++
@@ -116,8 +128,10 @@ func (e *Engine) pullProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 				continue
 			}
 
-			// Hard per-record error: warn, skip, do NOT advance watermark (REQ-SE-20 note).
+			// Non-fatal per-record write error (REQ-CMW-08): warn, count, skip.
+			// Do NOT add to HardErrors — one record failure must not abort the run.
 			fmt.Fprintf(e.w, "WARN pull %s: WriteNative %s: %v\n", a.Name(), rec.CanonicalID, writeErr)
+			result.WriteErrors++
 			// Stop advancing lastSuccessTime past this point.
 			continue
 		}
@@ -125,8 +139,10 @@ func (e *Engine) pullProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 		result.Pulled++
 		updateLastSuccess(&lastSuccessTime, rec.UpdatedAt)
 
-		// Step 4e (bind): record the native↔canonical ID mapping.
-		if err := e.store.BindProvider(a.Name(), string(nativeID), rec.CanonicalID); err != nil {
+		// Step 4e.3 (bind): record the native↔canonical ID mapping AND the
+		// revision watermark atomically (REQ-CMW-05, D2). Falls back to
+		// BindProvider for providers without revision tracking support.
+		if err := e.store.BindProviderWithRevision(a.Name(), string(nativeID), rec.CanonicalID, rec.Revision); err != nil {
 			// Non-fatal: warn but continue.
 			fmt.Fprintf(e.w, "WARN pull %s: bind %s→%s: %v\n",
 				a.Name(), nativeID, rec.CanonicalID, err)
@@ -170,12 +186,3 @@ func updateLastSuccess(t *time.Time, updatedAt string) {
 	}
 }
 
-// containsString reports whether ss contains s.
-func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}

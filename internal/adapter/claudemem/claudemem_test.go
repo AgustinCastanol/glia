@@ -1002,9 +1002,6 @@ func makeRawItem(id int64, project, createdAt string) json.RawMessage {
 	return b
 }
 
-// idStr is a convenience for tests comparing adapter.NativeID against int64 ids.
-func idStr(id int64) string { return fmt.Sprintf("%d", id) }
-
 // ---------------------------------------------------------------------------
 // Health tests (T-12)
 // ---------------------------------------------------------------------------
@@ -1081,20 +1078,20 @@ func TestListNative_ThreePagePagination_ProjectFilter(t *testing.T) {
 	// IDs are partitioned by range so the test can identify the project of each
 	// returned ID without parsing: 100000+ = my-project, 200000+ = other.
 	var p1 []json.RawMessage
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		p1 = append(p1, makeRawItem(int64(100000+i), "my-project", createdAt))
 	}
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		p1 = append(p1, makeRawItem(int64(200000+i), "other-project", createdAt))
 	}
 
 	var p2 []json.RawMessage
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		p2 = append(p2, makeRawItem(int64(110000+i), "my-project", createdAt))
 	}
 
 	var p3 []json.RawMessage
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		p3 = append(p3, makeRawItem(int64(120000+i), "my-project", createdAt))
 	}
 
@@ -1541,5 +1538,185 @@ func TestWriteCapability_NilTransport(t *testing.T) {
 	want := "read-only (worker missing POST /api/memory/save)"
 	if got != want {
 		t.Errorf("WriteCapability: got %q, want %q", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — WriteNative real implementation tests (REQ-CMW-04)
+// ---------------------------------------------------------------------------
+
+// writeNativeTransport is a configurable Transport for WriteNative testing.
+// WriteSupported and SaveMemory are controllable; other methods are no-ops.
+type writeNativeTransport struct {
+	fakeTransport
+	writeSupported  bool
+	saveMemoryResp  *SaveMemoryResponse
+	saveMemoryErr   error
+	saveMemoryCalls []SaveMemoryRequest
+}
+
+func (w *writeNativeTransport) WriteSupported(_ context.Context) bool {
+	return w.writeSupported
+}
+
+func (w *writeNativeTransport) SaveMemory(_ context.Context, req SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	w.saveMemoryCalls = append(w.saveMemoryCalls, req)
+	return w.saveMemoryResp, w.saveMemoryErr
+}
+
+// TestWriteNative_WriteEnabledFalse_ErrUnsupported verifies that when
+// write_enabled=false, WriteNative returns ErrUnsupported without calling
+// the transport (REQ-CMW-04 gate 1).
+func TestWriteNative_WriteEnabledFalse_ErrUnsupported(t *testing.T) {
+	tr := &writeNativeTransport{writeSupported: true}
+	a := New(Config{WriteEnabled: false}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "test", Narrative: "body"}
+	id, err := a.WriteNative(context.Background(), native)
+	if id != "" {
+		t.Errorf("expected empty NativeID, got %q", id)
+	}
+	if !isUnsupported(err) {
+		t.Fatalf("expected ErrUnsupported when write_enabled=false, got %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 0 {
+		t.Errorf("SaveMemory must not be called when write_enabled=false, called %d times", len(tr.saveMemoryCalls))
+	}
+}
+
+// TestWriteNative_ProbeReturnsFalse_ErrUnsupported verifies that when the
+// endpoint probe returns false, WriteNative returns ErrUnsupported
+// (REQ-CMW-04 gate 2).
+func TestWriteNative_ProbeReturnsFalse_ErrUnsupported(t *testing.T) {
+	tr := &writeNativeTransport{writeSupported: false}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "test", Narrative: "body"}
+	id, err := a.WriteNative(context.Background(), native)
+	if id != "" {
+		t.Errorf("expected empty NativeID, got %q", id)
+	}
+	if !isUnsupported(err) {
+		t.Fatalf("expected ErrUnsupported when probe is false, got %v", err)
+	}
+}
+
+// TestWriteNative_Success returns the SaveMemory response ID as NativeID
+// (REQ-CMW-04 happy path).
+func TestWriteNative_Success(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 42},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "hello", Narrative: "world"}
+	id, err := a.WriteNative(context.Background(), native)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(id) != "42" {
+		t.Errorf("NativeID: got %q, want %q", id, "42")
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 SaveMemory call, got %d", len(tr.saveMemoryCalls))
+	}
+}
+
+// TestWriteNative_WrongNativeType_ErrUnsupported verifies that a non-claudeMemRecord
+// native record returns ErrUnsupported (REQ-CMW-04 type guard).
+func TestWriteNative_WrongNativeType_ErrUnsupported(t *testing.T) {
+	tr := &writeNativeTransport{writeSupported: true}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	_, err := a.WriteNative(context.Background(), "not-a-claudeMemRecord")
+	if !isUnsupported(err) {
+		t.Fatalf("expected ErrUnsupported for wrong native type, got %v", err)
+	}
+}
+
+// TestWriteNative_TransportError_Surfaced verifies that a SaveMemory transport
+// error is returned to the caller (REQ-CMW-04 error path).
+func TestWriteNative_TransportError_Surfaced(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryErr:  fmt.Errorf("%w: connection refused", adapter.ErrUnavailable),
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "t", Narrative: "n"}
+	_, err := a.WriteNative(context.Background(), native)
+	if err == nil {
+		t.Fatal("expected error from SaveMemory, got nil")
+	}
+}
+
+// TestWriteNative_TextFormatting verifies the SaveMemory request body uses
+// "Title\n\nNarrative" format for non-empty narrative (REQ-CMW-04 payload).
+func TestWriteNative_TextFormatting(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 99},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{Title: "My Title", Narrative: "My content body."}
+	if _, err := a.WriteNative(context.Background(), native); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(tr.saveMemoryCalls))
+	}
+	text := tr.saveMemoryCalls[0].Text
+	if !strings.Contains(text, "My Title") {
+		t.Errorf("payload text should contain title, got: %q", text)
+	}
+	if !strings.Contains(text, "My content body.") {
+		t.Errorf("payload text should contain narrative, got: %q", text)
+	}
+	if want := "My Title\n\nMy content body."; text != want {
+		t.Errorf("payload text mismatch: got %q, want %q", text, want)
+	}
+}
+
+// TestWriteNative_TextFormatting_TitleOnly verifies the SaveMemory payload
+// falls back to bare title when narrative is empty (REQ-CMW-04).
+func TestWriteNative_TextFormatting_TitleOnly(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 100},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{Title: "Only the title", Narrative: ""}
+	if _, err := a.WriteNative(context.Background(), native); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(tr.saveMemoryCalls))
+	}
+	if got, want := tr.saveMemoryCalls[0].Text, "Only the title"; got != want {
+		t.Errorf("payload text mismatch: got %q, want %q", got, want)
+	}
+}
+
+// TestWriteNative_TextFormatting_NarrativeOnly verifies the SaveMemory payload
+// falls back to bare narrative when title is empty (REQ-CMW-04).
+func TestWriteNative_TextFormatting_NarrativeOnly(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 101},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{Title: "", Narrative: "Just the body."}
+	if _, err := a.WriteNative(context.Background(), native); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(tr.saveMemoryCalls))
+	}
+	if got, want := tr.saveMemoryCalls[0].Text, "Just the body."; got != want {
+		t.Errorf("payload text mismatch: got %q, want %q", got, want)
 	}
 }

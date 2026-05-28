@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"time"
 
@@ -163,6 +164,7 @@ func (e *Engine) Pull(ctx context.Context) (*RunReport, error) {
 		}
 		report.PerProvider[a.Name()] = result
 		report.UpdatesSkipped += result.UpdatesSkipped
+		report.WriteErrors += result.WriteErrors
 	}
 
 	if allFailed && len(providers) > 0 {
@@ -200,17 +202,17 @@ func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
 	merged := &RunReport{
 		PerProvider:    make(map[string]ProviderResult),
 		UpdatesSkipped: pullReport.UpdatesSkipped + pushReport.UpdatesSkipped,
+		WriteErrors:    pullReport.WriteErrors + pushReport.WriteErrors,
 		Conflicts:      pullReport.Conflicts + pushReport.Conflicts,
 	}
-	for p, r := range pullReport.PerProvider {
-		merged.PerProvider[p] = r
-	}
+	maps.Copy(merged.PerProvider, pullReport.PerProvider)
 	for p, r := range pushReport.PerProvider {
 		existing := merged.PerProvider[p]
 		existing.Pulled += r.Pulled
 		existing.Pushed += r.Pushed
 		existing.Skipped += r.Skipped
 		existing.UpdatesSkipped += r.UpdatesSkipped
+		existing.WriteErrors += r.WriteErrors
 		merged.PerProvider[p] = existing
 	}
 	merged.HardErrors = append(pullReport.HardErrors, pushReport.HardErrors...)
@@ -257,11 +259,14 @@ func (e *Engine) gitCommit() {
 func (e *Engine) Status(ctx context.Context) (*StatusReport, error) {
 	providers := e.activeProviders()
 	report := &StatusReport{
-		ProviderHealth: make(map[string]error, len(providers)),
+		ProviderHealth:          make(map[string]error, len(providers)),
+		ProviderWriteCapability: make(map[string]string, len(providers)),
 	}
 
 	for _, a := range providers {
 		report.ProviderHealth[a.Name()] = a.Health(ctx)
+		// REQ-CMW-09: surface write capability per provider for glia status display.
+		report.ProviderWriteCapability[a.Name()] = a.WriteCapability()
 	}
 
 	// Expose current conflicts as summaries.
