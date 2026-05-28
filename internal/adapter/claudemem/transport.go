@@ -1,17 +1,31 @@
 package claudemem
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/agustincastanol/glia/internal/adapter"
 )
+
+// SaveMemoryRequest is the request body for POST /api/memory/save.
+type SaveMemoryRequest struct {
+	Text string `json:"text"`
+}
+
+// SaveMemoryResponse is the response body for POST /api/memory/save.
+type SaveMemoryResponse struct {
+	Success bool  `json:"success"`
+	ID      int64 `json:"id"`
+}
 
 // Transport abstracts the HTTP calls to the claude-mem daemon so that unit
 // tests can inject a fake without requiring a real daemon to be running.
@@ -35,6 +49,18 @@ type Transport interface {
 	// Returns ("", false, adapter.ErrUnavailable) on connection failure, missing
 	// endpoint, or non-2xx/non-404 — signals ReadNative to degrade to scan.
 	GetByID(ctx context.Context, id string) (body []byte, found bool, err error)
+
+	// SaveMemory POSTs to POST /api/memory/save with body as JSON.
+	// Returns a non-nil error for any non-2xx status or network failure.
+	// REQ-CMW-01.
+	SaveMemory(ctx context.Context, body SaveMemoryRequest) (*SaveMemoryResponse, error)
+
+	// WriteSupported probes POST /api/memory/save once per process lifetime and
+	// caches the result via sync.Once.
+	// HTTP 400 → true (endpoint present, rejected empty payload as expected).
+	// HTTP 404 or network error → false.
+	// REQ-CMW-02.
+	WriteSupported(ctx context.Context) bool
 }
 
 // supervisorConfig is a minimal subset of ~/.claude-mem/supervisor.json.
@@ -84,6 +110,10 @@ func resolveBaseURL(explicit string) string {
 type httpTransport struct {
 	client  *http.Client // carries default 10s timeout; context deadline also authoritative
 	baseURL string
+
+	// writeOnce caches the WriteSupported probe result (REQ-CMW-02, D1).
+	writeOnce      sync.Once
+	writeSupportedResult bool
 }
 
 // NewHTTPTransport returns a Transport targeting the claude-mem HTTP daemon.
@@ -212,4 +242,80 @@ func (t *httpTransport) GetByID(ctx context.Context, id string) ([]byte, bool, e
 		return nil, false, fmt.Errorf("%w: /api/observations?id=%s returned %d items, expected ≤1",
 			adapter.ErrUnavailable, id, len(envelope.Items))
 	}
+}
+
+// SaveMemory POSTs req as JSON to POST /api/memory/save (REQ-CMW-01).
+// Returns a non-nil error for any non-2xx response or network failure.
+func (t *httpTransport) SaveMemory(ctx context.Context, req SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("SaveMemory: marshal request: %w", err)
+	}
+
+	url := t.baseURL + "/api/memory/save"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("%w: build SaveMemory request: %v", adapter.ErrUnavailable, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: http post /api/memory/save: %v", adapter.ErrUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%w: /api/memory/save unexpected status %d", adapter.ErrUnavailable, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read /api/memory/save response body: %v", adapter.ErrUnavailable, err)
+	}
+
+	var result SaveMemoryResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("%w: decode /api/memory/save response: %v", adapter.ErrUnavailable, err)
+	}
+	return &result, nil
+}
+
+// WriteSupported probes POST /api/memory/save once per httpTransport lifetime
+// and caches the result (REQ-CMW-02, D1).
+//
+// Probe payload is {"text":""} (intentionally invalid — triggers 400 if route exists).
+// HTTP 400 → true (endpoint present). HTTP 404 or network error → false.
+func (t *httpTransport) WriteSupported(ctx context.Context) bool {
+	t.writeOnce.Do(func() {
+		payload, _ := json.Marshal(SaveMemoryRequest{Text: ""})
+		url := t.baseURL + "/api/memory/save"
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			log.Printf("claude-mem transport: WriteSupported probe: build request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := t.client.Do(req)
+		if err != nil {
+			log.Printf("claude-mem transport: WriteSupported probe: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusBadRequest: // 400 → endpoint present
+			t.writeSupportedResult = true
+		case http.StatusNotFound: // 404 → route missing
+			t.writeSupportedResult = false
+		default:
+			log.Printf("claude-mem transport: WriteSupported probe: unexpected status %d", resp.StatusCode)
+			t.writeSupportedResult = false
+		}
+	})
+	return t.writeSupportedResult
 }

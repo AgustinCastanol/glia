@@ -512,6 +512,12 @@ func (a *EngramAdapter) SupportedKinds() []string {
 	return nil
 }
 
+// WriteCapability returns "read+write" for engram, which always supports writes
+// via the CLI (REQ-CMW-03).
+func (a *EngramAdapter) WriteCapability() string {
+	return "read+write"
+}
+
 // WriteNative writes an EngramRecord to the engram provider (REQ-ENG-24, REQ-ENG-25, REQ-ENG-26).
 // Idempotent: if a record with the same provider_id already exists, it updates in place.
 func (a *EngramAdapter) WriteNative(ctx context.Context, record adapter.NativeRecord) (adapter.NativeID, error) {

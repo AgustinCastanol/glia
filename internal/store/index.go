@@ -56,6 +56,11 @@ type index struct {
 	BuiltAt           string                           `json:"built_at"`
 	Entries           map[string]IndexEntry            `json:"entries"`
 	ByProvider        map[string]map[string]string     `json:"by_provider,omitempty"`
+	// ByProviderRevision tracks the last-pushed revision for each canonical record
+	// per provider. Shape: provider → canonicalID → revision. Nil-safe: absent on
+	// old index.json files is treated as "no revision known" (backward compat).
+	// REQ-CMW-05.
+	ByProviderRevision map[string]map[string]int       `json:"by_provider_revision,omitempty"`
 	SyncState         map[string]ProviderSyncState     `json:"sync_state,omitempty"`
 	Conflicts         []ConflictEntry                  `json:"conflicts,omitempty"`
 }
@@ -82,6 +87,8 @@ func loadIndex(path string) (*index, error) {
 	if idx.Conflicts == nil {
 		idx.Conflicts = []ConflictEntry{}
 	}
+	// ByProviderRevision is intentionally left nil for old index.json files;
+	// ProviderRevision and BindProviderWithRevision handle nil maps to preserve backward compatibility.
 	return &idx, nil
 }
 
