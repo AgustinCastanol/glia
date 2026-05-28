@@ -1002,9 +1002,6 @@ func makeRawItem(id int64, project, createdAt string) json.RawMessage {
 	return b
 }
 
-// idStr is a convenience for tests comparing adapter.NativeID against int64 ids.
-func idStr(id int64) string { return fmt.Sprintf("%d", id) }
-
 // ---------------------------------------------------------------------------
 // Health tests (T-12)
 // ---------------------------------------------------------------------------
@@ -1081,20 +1078,20 @@ func TestListNative_ThreePagePagination_ProjectFilter(t *testing.T) {
 	// IDs are partitioned by range so the test can identify the project of each
 	// returned ID without parsing: 100000+ = my-project, 200000+ = other.
 	var p1 []json.RawMessage
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		p1 = append(p1, makeRawItem(int64(100000+i), "my-project", createdAt))
 	}
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		p1 = append(p1, makeRawItem(int64(200000+i), "other-project", createdAt))
 	}
 
 	var p2 []json.RawMessage
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		p2 = append(p2, makeRawItem(int64(110000+i), "my-project", createdAt))
 	}
 
 	var p3 []json.RawMessage
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		p3 = append(p3, makeRawItem(int64(120000+i), "my-project", createdAt))
 	}
 

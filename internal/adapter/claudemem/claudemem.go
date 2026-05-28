@@ -196,7 +196,7 @@ func deriveTitle(source string) string {
 		return source
 	}
 	i := 0
-	for n := 0; n < titleMaxRunes; n++ {
+	for range titleMaxRunes {
 		_, size := utf8.DecodeRuneInString(source[i:])
 		i += size
 	}
