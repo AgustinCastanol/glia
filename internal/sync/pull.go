@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/agustincastanol/glia/internal/adapter"
@@ -73,7 +74,7 @@ func (e *Engine) pullProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 
 		// Step 4c: SupportedKinds filter (REQ-SE-29b).
 		supported := a.SupportedKinds()
-		if len(supported) > 0 && !containsString(supported, rec.Kind) {
+		if len(supported) > 0 && !slices.Contains(supported, rec.Kind) {
 			continue
 		}
 
@@ -185,12 +186,3 @@ func updateLastSuccess(t *time.Time, updatedAt string) {
 	}
 }
 
-// containsString reports whether ss contains s.
-func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
