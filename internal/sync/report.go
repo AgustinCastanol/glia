@@ -12,6 +12,10 @@ type ProviderResult struct {
 	Pushed         int
 	Skipped        int // equal records, no append needed
 	UpdatesSkipped int // engram update-gap skips (D9)
+	// WriteErrors counts non-fatal WriteNative failures for this provider
+	// (REQ-CMW-08). These are surfaced in the report but do not prevent the
+	// run from succeeding — the engine continues with the next record.
+	WriteErrors int
 }
 
 // RunReport is the aggregate result returned by Push, Pull, and Sync.
@@ -21,6 +25,9 @@ type RunReport struct {
 
 	// UpdatesSkipped is the sum of UpdatesSkipped across all providers.
 	UpdatesSkipped int
+
+	// WriteErrors is the sum of WriteErrors across all providers (REQ-CMW-08).
+	WriteErrors int
 
 	// Conflicts is the number of (canonical_id, revision) conflicts detected
 	// or present after the run.
@@ -76,6 +83,10 @@ func (r *RunReport) WriteSummary(w io.Writer) {
 
 	if r.UpdatesSkipped > 0 {
 		fmt.Fprintf(w, "updates_skipped=%d (engram update gap)\n", r.UpdatesSkipped)
+	}
+
+	if r.WriteErrors > 0 {
+		fmt.Fprintf(w, "write_errors=%d — non-fatal write failures; check WARN lines above\n", r.WriteErrors)
 	}
 
 	if r.Conflicts > 0 {

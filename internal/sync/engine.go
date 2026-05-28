@@ -163,6 +163,7 @@ func (e *Engine) Pull(ctx context.Context) (*RunReport, error) {
 		}
 		report.PerProvider[a.Name()] = result
 		report.UpdatesSkipped += result.UpdatesSkipped
+		report.WriteErrors += result.WriteErrors
 	}
 
 	if allFailed && len(providers) > 0 {
@@ -200,6 +201,7 @@ func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
 	merged := &RunReport{
 		PerProvider:    make(map[string]ProviderResult),
 		UpdatesSkipped: pullReport.UpdatesSkipped + pushReport.UpdatesSkipped,
+		WriteErrors:    pullReport.WriteErrors + pushReport.WriteErrors,
 		Conflicts:      pullReport.Conflicts + pushReport.Conflicts,
 	}
 	for p, r := range pullReport.PerProvider {
@@ -211,6 +213,7 @@ func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
 		existing.Pushed += r.Pushed
 		existing.Skipped += r.Skipped
 		existing.UpdatesSkipped += r.UpdatesSkipped
+		existing.WriteErrors += r.WriteErrors
 		merged.PerProvider[p] = existing
 	}
 	merged.HardErrors = append(pullReport.HardErrors, pushReport.HardErrors...)

@@ -240,6 +240,67 @@ func TestPull_FromCanonicalErrUnsupportedSkips(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 7 — ClaudeMemWriteErrors counter (REQ-CMW-08)
+// ---------------------------------------------------------------------------
+
+// TestPull_WriteErrorIncrements_WriteErrors verifies that when WriteNative
+// returns a non-ErrUnsupported error, the ProviderResult.WriteErrors counter
+// is incremented and no HardError is added (REQ-CMW-08).
+func TestPull_WriteErrorIncrements_WriteErrors(t *testing.T) {
+	s, _ := openPullStore(t)
+
+	seedCanonical(t, s, []store.CanonicalRecord{
+		{Kind: "observation", Title: "write-fail", ContentFormat: "markdown",
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Origin:    store.Origin{Provider: "other", ProviderID: "wf1"}},
+	})
+
+	a := &pullFakeAdapter{name: "claude-mem", writeErr: errors.New("connection reset")}
+	e := New(s, map[string]adapter.Adapter{"claude-mem": a}, Default(), Options{}, nil)
+
+	report, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	pr := report.PerProvider["claude-mem"]
+	if pr.WriteErrors != 1 {
+		t.Errorf("WriteErrors=%d, want 1", pr.WriteErrors)
+	}
+	// Non-fatal: no hard errors.
+	if len(report.HardErrors) != 0 {
+		t.Errorf("HardErrors=%d, want 0 (write errors are non-fatal)", len(report.HardErrors))
+	}
+}
+
+// TestPull_WriteErrors_SummedInReport verifies that RunReport.WriteErrors
+// aggregates the per-provider WriteErrors counters.
+func TestPull_WriteErrors_SummedInReport(t *testing.T) {
+	s, _ := openPullStore(t)
+
+	seedCanonical(t, s, []store.CanonicalRecord{
+		{Kind: "observation", Title: "a", ContentFormat: "markdown",
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Origin:    store.Origin{Provider: "other", ProviderID: "z1"}},
+		{Kind: "observation", Title: "b", ContentFormat: "markdown",
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Origin:    store.Origin{Provider: "other", ProviderID: "z2"}},
+	})
+
+	a := &pullFakeAdapter{name: "claude-mem", writeErr: errors.New("timeout")}
+	e := New(s, map[string]adapter.Adapter{"claude-mem": a}, Default(), Options{}, nil)
+
+	report, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	if report.WriteErrors != 2 {
+		t.Errorf("RunReport.WriteErrors=%d, want 2", report.WriteErrors)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Phase 6 — drift detection and BindProviderWithRevision (REQ-CMW-06/07)
 // ---------------------------------------------------------------------------
 
