@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -452,6 +453,44 @@ func TestStatus_TableIncludesEffectiveProjectColumn(t *testing.T) {
 	out := executeStatus(t, dir, false)
 	if !strings.Contains(out, "EFFECTIVE_PROJECT") {
 		t.Errorf("expected EFFECTIVE_PROJECT column in status table, got:\n%s", out)
+	}
+}
+
+// TestStatus_TableShowsResolvedEffectiveProject verifies the happy path: a
+// project config with a per-provider override flows through buildAdapters and
+// the resolved value appears in the EFFECTIVE_PROJECT column of the table.
+func TestStatus_TableShowsResolvedEffectiveProject(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	storeDir := filepath.Join(dir, ".glia")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatalf("mkdir storeDir: %v", err)
+	}
+	cfgYAML := "" +
+		"schema_version: 1\n" +
+		"project: global-fallback\n" +
+		"providers:\n" +
+		"  engram:\n" +
+		"    enabled: true\n" +
+		"    transport: http\n" +
+		"    project: engram-override\n" +
+		"  claude-mem:\n" +
+		"    enabled: true\n" +
+		"    transport: http\n"
+	if err := os.WriteFile(filepath.Join(storeDir, "config.yaml"), []byte(cfgYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	out := executeStatus(t, dir, false)
+
+	if !strings.Contains(out, "engram-override") {
+		t.Errorf("expected per-provider override %q in EFFECTIVE_PROJECT column, got:\n%s", "engram-override", out)
+	}
+	if !strings.Contains(out, "global-fallback") {
+		t.Errorf("expected global fallback %q for claude-mem in EFFECTIVE_PROJECT column, got:\n%s", "global-fallback", out)
 	}
 }
 
