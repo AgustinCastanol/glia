@@ -205,6 +205,66 @@ func TestFromCanonical_Purity_NoProviderCalls(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// FromCanonical: cfg.Project populates rec.Project (PRD-6, Phase 5)
+// ---------------------------------------------------------------------------
+
+// TestFromCanonical_CfgProject_PopulatesRecordProject verifies that when
+// cfg.Project is set, FromCanonical stamps the resulting EngramRecord.Project
+// so WriteNative sends the correct --project flag to the CLI.
+func TestFromCanonical_CfgProject_PopulatesRecordProject(t *testing.T) {
+	a := engram.New(engram.Config{
+		Commander: &panicCommander{t: t},
+		Project:   "wired-project",
+	}, nil)
+
+	canonical := store.CanonicalRecord{
+		Kind:    "observation",
+		Title:   "test obs",
+		Type:    "manual",
+		Content: "content",
+		Origin:  store.Origin{Provider: "engram"},
+	}
+
+	native, err := a.FromCanonical(canonical)
+	if err != nil {
+		t.Fatalf("FromCanonical error: %v", err)
+	}
+	rec, ok := native.(engram.EngramRecord)
+	if !ok {
+		t.Fatalf("expected EngramRecord, got %T", native)
+	}
+	if rec.Project != "wired-project" {
+		t.Errorf("rec.Project = %q, want %q", rec.Project, "wired-project")
+	}
+}
+
+// TestFromCanonical_CfgProjectEmpty_RecordProjectEmpty verifies backward compat:
+// when cfg.Project is empty, rec.Project is also empty (no regression).
+func TestFromCanonical_CfgProjectEmpty_RecordProjectEmpty(t *testing.T) {
+	a := engram.New(engram.Config{Commander: &panicCommander{t: t}, Project: ""}, nil)
+
+	canonical := store.CanonicalRecord{
+		Kind:    "observation",
+		Title:   "test obs",
+		Type:    "manual",
+		Content: "content",
+		Origin:  store.Origin{Provider: "engram"},
+	}
+
+	native, err := a.FromCanonical(canonical)
+	if err != nil {
+		t.Fatalf("FromCanonical error: %v", err)
+	}
+	rec, ok := native.(engram.EngramRecord)
+	if !ok {
+		t.Fatalf("expected EngramRecord, got %T", native)
+	}
+	if rec.Project != "" {
+		t.Errorf("rec.Project = %q, want empty string when cfg.Project unset", rec.Project)
+	}
+}
+
 // buildExportBody builds a fake GET /export JSON body with the given observations.
 // Timestamps use the SQLite format "2006-01-02 15:04:05" as returned by the real daemon.
 func buildExportBody(obs []map[string]interface{}) []byte {
@@ -301,6 +361,54 @@ func TestListNative_CrossProjectFiltered(t *testing.T) {
 		if string(id) != "obs-mine-1" && string(id) != "obs-mine-2" {
 			t.Errorf("unexpected ID in result: %q", id)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListNative (Export path): cfg.Project overrides the project parameter (PRD-6)
+// ---------------------------------------------------------------------------
+func TestListNative_CfgProject_OverridesParameter(t *testing.T) {
+	// Export has observations for "configured-project" and "other-project".
+	// Adapter is built with cfg.Project = "configured-project".
+	// ListNative is called with project = "other-project" (the old global).
+	// Expected: only "configured-project" records returned.
+	exportObs := []map[string]interface{}{
+		{"sync_id": "obs-cfg-1", "project": "configured-project", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
+		{"sync_id": "obs-other-1", "project": "other-project", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
+	}
+
+	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
+	a := engram.New(engram.Config{Commander: &fakeCommander{}, Project: "configured-project"}, tr)
+
+	ids, err := a.ListNative(context.Background(), "other-project", time.Time{})
+	if err != nil {
+		t.Fatalf("ListNative error: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Errorf("expected 1 ID (from cfg.Project), got %d: %v", len(ids), ids)
+	}
+	if len(ids) == 1 && string(ids[0]) != "obs-cfg-1" {
+		t.Errorf("expected obs-cfg-1, got %q", ids[0])
+	}
+}
+
+// TestListNative_CfgProjectEmpty_UsesParameter verifies that when cfg.Project
+// is empty, the project parameter is used as-is (backward compat).
+func TestListNative_CfgProjectEmpty_UsesParameter(t *testing.T) {
+	exportObs := []map[string]interface{}{
+		{"sync_id": "obs-param-1", "project": "param-project", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
+		{"sync_id": "obs-other-1", "project": "other-project", "scope": "project", "updated_at": "2026-05-16 04:00:00"},
+	}
+
+	tr := &fakeTransport{exportBody: buildExportBody(exportObs)}
+	a := engram.New(engram.Config{Commander: &fakeCommander{}, Project: ""}, tr) // no cfg override
+
+	ids, err := a.ListNative(context.Background(), "param-project", time.Time{})
+	if err != nil {
+		t.Fatalf("ListNative error: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Errorf("expected 1 ID for param-project, got %d: %v", len(ids), ids)
 	}
 }
 
