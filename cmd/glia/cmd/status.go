@@ -32,6 +32,11 @@ type statusJSON struct {
 	// WriteCapability maps provider name to its write capability string (REQ-CMW-09).
 	WriteCapability map[string]string `json:"write_capability"`
 
+	// EffectiveProject maps provider name to the project name that adapter will
+	// use for list/write operations (PRD-6). Empty string means no project
+	// override was configured; the value is informational only.
+	EffectiveProject map[string]string `json:"effective_project"`
+
 	// Conflicts is the current unresolved conflict list.
 	Conflicts []enginesync.ConflictSummary `json:"conflicts"`
 
@@ -111,8 +116,19 @@ func runStatus(cmd *cobra.Command, _ []string) {
 		os.Exit(1)
 	}
 
+	// Collect per-adapter effective project via optional EffectiveProject() accessor.
+	// projecter is a subset interface satisfied by engram.EngramAdapter and
+	// claudemem.ClaudeMemAdapter without changing the Adapter contract (PRD-6).
+	type projecter interface{ EffectiveProject() string }
+	effectiveProjects := make(map[string]string, len(adapters))
+	for name, a := range adapters {
+		if ep, ok := a.(projecter); ok {
+			effectiveProjects[name] = ep.EffectiveProject()
+		}
+	}
+
 	if statusFlags.json {
-		runStatusJSON(cmd, s, report)
+		runStatusJSON(cmd, s, report, effectiveProjects)
 		return
 	}
 
@@ -120,7 +136,7 @@ func runStatus(cmd *cobra.Command, _ []string) {
 	tw := newTabWriter(w)
 
 	// Header.
-	fmt.Fprintln(tw, "PROVIDER\tSTATUS\tWRITE_CAPABILITY\tLAST_PUSHED\tLAST_PULLED")
+	fmt.Fprintln(tw, "PROVIDER\tSTATUS\tWRITE_CAPABILITY\tEFFECTIVE_PROJECT\tLAST_PUSHED\tLAST_PULLED")
 
 	anyDegraded := false
 	for _, name := range sortedKeys(report.ProviderHealth) {
@@ -136,9 +152,10 @@ func runStatus(cmd *cobra.Command, _ []string) {
 				writeCap = cap
 			}
 		}
+		effProj := dashIfEmpty(effectiveProjects[name])
 		ps, _ := s.SyncState(name)
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			name, status, writeCap,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			name, status, writeCap, effProj,
 			dashIfEmpty(ps.LastPushedAt),
 			dashIfEmpty(ps.LastPulledAt),
 		)
@@ -189,8 +206,11 @@ func sortStringSlice(ss []string) {
 }
 
 // buildStatusJSON constructs the statusJSON payload from a StatusReport and an
-// open store. Separated from runStatusJSON so tests can call it without os.Exit.
-func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSON, error) {
+// open store. effectiveProjects maps provider name to its EffectiveProject()
+// value (PRD-6); pass nil when adapters are unavailable and the map will be
+// populated with empty strings per provider.
+// Separated from runStatusJSON so tests can call it without os.Exit.
+func buildStatusJSON(s *store.Store, report *enginesync.StatusReport, effectiveProjects map[string]string) (statusJSON, error) {
 	health := make(map[string]string, len(report.ProviderHealth))
 	for name, herr := range report.ProviderHealth {
 		if herr != nil {
@@ -205,6 +225,14 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSO
 	for name := range report.ProviderHealth {
 		if report.ProviderWriteCapability != nil {
 			writeCap[name] = report.ProviderWriteCapability[name]
+		}
+	}
+
+	// PRD-6: effective project per provider.
+	effProj := make(map[string]string, len(report.ProviderHealth))
+	for name := range report.ProviderHealth {
+		if effectiveProjects != nil {
+			effProj[name] = effectiveProjects[name]
 		}
 	}
 
@@ -225,13 +253,14 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSO
 	}
 
 	return statusJSON{
-		ProviderHealth:  health,
-		WriteCapability: writeCap,
-		Conflicts:       conflicts,
-		SyncState:       syncState,
-		LineCount:       st.LineCount,
-		FileSizeBytes:   st.FileSizeBytes,
-		SchemaVersion:   st.SchemaVersion,
+		ProviderHealth:   health,
+		WriteCapability:  writeCap,
+		EffectiveProject: effProj,
+		Conflicts:        conflicts,
+		SyncState:        syncState,
+		LineCount:        st.LineCount,
+		FileSizeBytes:    st.FileSizeBytes,
+		SchemaVersion:    st.SchemaVersion,
 	}, nil
 }
 
@@ -243,8 +272,8 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport) (statusJSO
 //
 // Conflicts are surfaced in the JSON body (conflicts array) and do not affect
 // the exit code. The TUI reads conflicts directly from the JSON body.
-func runStatusJSON(cmd *cobra.Command, s *store.Store, report *enginesync.StatusReport) {
-	out, err := buildStatusJSON(s, report)
+func runStatusJSON(cmd *cobra.Command, s *store.Store, report *enginesync.StatusReport, effectiveProjects map[string]string) {
+	out, err := buildStatusJSON(s, report, effectiveProjects)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "status --json:", err)
 		os.Exit(1)

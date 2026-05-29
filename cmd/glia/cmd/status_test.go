@@ -256,7 +256,7 @@ func TestStatusJSON_KeysPresent(t *testing.T) {
 		Conflicts:      nil,
 	}
 
-	out, err := buildStatusJSON(s, report)
+	out, err := buildStatusJSON(s, report, nil)
 	if err != nil {
 		t.Fatalf("buildStatusJSON: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestStatusJSON_HealthyProviderEmptyString(t *testing.T) {
 	report := &enginesync.StatusReport{
 		ProviderHealth: map[string]error{"engram": nil},
 	}
-	out, err := buildStatusJSON(s, report)
+	out, err := buildStatusJSON(s, report, nil)
 	if err != nil {
 		t.Fatalf("buildStatusJSON: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestStatusJSON_DegradedProviderHasErrorString(t *testing.T) {
 			"engram": errors.New("connection refused"),
 		},
 	}
-	out, err := buildStatusJSON(s, report)
+	out, err := buildStatusJSON(s, report, nil)
 	if err != nil {
 		t.Fatalf("buildStatusJSON: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestStatusJSON_ConflictsNeverNil(t *testing.T) {
 		ProviderHealth: map[string]error{},
 		Conflicts:      nil,
 	}
-	out, err := buildStatusJSON(s, report)
+	out, err := buildStatusJSON(s, report, nil)
 	if err != nil {
 		t.Fatalf("buildStatusJSON: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestStatusJSON_StoreStatsPopulated(t *testing.T) {
 	report := &enginesync.StatusReport{
 		ProviderHealth: map[string]error{},
 	}
-	out, err := buildStatusJSON(s, report)
+	out, err := buildStatusJSON(s, report, nil)
 	if err != nil {
 		t.Fatalf("buildStatusJSON: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestStatusJSON_WriteCapabilityPresent(t *testing.T) {
 		},
 	}
 
-	out, err := buildStatusJSON(s, report)
+	out, err := buildStatusJSON(s, report, nil)
 	if err != nil {
 		t.Fatalf("buildStatusJSON: %v", err)
 	}
@@ -434,6 +434,92 @@ func TestStatusJSON_WriteCapabilityPresent(t *testing.T) {
 	}
 	if _, ok := m["write_capability"]; !ok {
 		t.Error("expected 'write_capability' key in JSON output")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — effective_project per provider in status output (PRD-6)
+// ---------------------------------------------------------------------------
+
+// TestStatus_TableIncludesEffectiveProjectColumn verifies that the status
+// table header contains an EFFECTIVE_PROJECT column (PRD-6).
+func TestStatus_TableIncludesEffectiveProjectColumn(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	out := executeStatus(t, dir, false)
+	if !strings.Contains(out, "EFFECTIVE_PROJECT") {
+		t.Errorf("expected EFFECTIVE_PROJECT column in status table, got:\n%s", out)
+	}
+}
+
+// TestStatusJSON_EffectiveProjectPresent verifies that buildStatusJSON includes
+// the effective_project map when adapters expose EffectiveProject() (PRD-6).
+func TestStatusJSON_EffectiveProjectPresent(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{"engram": nil},
+	}
+
+	out, err := buildStatusJSON(s, report, map[string]string{"engram": "my-project"})
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if _, ok := m["effective_project"]; !ok {
+		t.Error("expected 'effective_project' key in JSON output")
+	}
+}
+
+// TestStatusJSON_EffectiveProjectValue verifies that the effective_project map
+// carries the per-provider project values passed in (PRD-6).
+func TestStatusJSON_EffectiveProjectValue(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hello", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{
+			"engram":     nil,
+			"claude-mem": nil,
+		},
+	}
+
+	effectiveProjects := map[string]string{
+		"engram":     "eng-project",
+		"claude-mem": "",
+	}
+	out, err := buildStatusJSON(s, report, effectiveProjects)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	if v := out.EffectiveProject["engram"]; v != "eng-project" {
+		t.Errorf("effective_project[engram] = %q, want %q", v, "eng-project")
+	}
+	if v := out.EffectiveProject["claude-mem"]; v != "" {
+		t.Errorf("effective_project[claude-mem] = %q, want empty string", v)
 	}
 }
 
@@ -455,7 +541,7 @@ func TestStatusJSON_WriteCapabilityValue(t *testing.T) {
 		},
 	}
 
-	out, err := buildStatusJSON(s, report)
+	out, err := buildStatusJSON(s, report, nil)
 	if err != nil {
 		t.Fatalf("buildStatusJSON: %v", err)
 	}
