@@ -97,7 +97,7 @@ func runStatus(cmd *cobra.Command, _ []string) {
 	if lcErr == nil {
 		cfg = toEngineConfig(loadedConfig)
 		var aErr error
-		adapters, aErr = buildAdapters(loadedConfig)
+		adapters, aErr = buildAdapters(loadedConfig, rootFlags.project)
 		if aErr != nil {
 			fmt.Fprintln(os.Stderr, "status: build adapters:", aErr)
 		}

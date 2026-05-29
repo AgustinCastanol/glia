@@ -164,11 +164,12 @@ func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
 	cfg := toEngineConfig(loadedConfig)
 
 	// Project resolution: --project flag overrides config.yaml's project field
-	// (REQ-CFG-02 layering). Empty flag falls back to the loaded config, which
-	// is what claude-mem's strict project equality filter (REQ-CM-07) expects.
-	project := rootFlags.project
-	if project == "" {
-		project = loadedConfig.Project
+	// (REQ-CFG-02 layering). Empty flag falls back to the loaded config.
+	// PRD-6: if the resolved project is still empty after all layers, fail here
+	// before any adapter I/O so the user gets a clear error message.
+	project, err := resolveEngineProject(rootFlags.project, loadedConfig.Project)
+	if err != nil {
+		return nil, err
 	}
 
 	opts := enginesync.Options{
@@ -188,7 +189,7 @@ func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
 		opts.MirrorEngram = true
 	}
 
-	adapters, err := buildAdapters(loadedConfig)
+	adapters, err := buildAdapters(loadedConfig, rootFlags.project)
 	if err != nil {
 		return nil, fmt.Errorf("build adapters: %w", err)
 	}
