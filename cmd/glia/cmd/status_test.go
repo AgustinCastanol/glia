@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agustincastanol/glia/internal/config"
 	"github.com/agustincastanol/glia/internal/store"
 	enginesync "github.com/agustincastanol/glia/internal/sync"
 )
@@ -456,10 +457,16 @@ func TestStatus_TableIncludesEffectiveProjectColumn(t *testing.T) {
 	}
 }
 
-// TestStatus_TableShowsResolvedEffectiveProject verifies the happy path: a
-// project config with a per-provider override flows through buildAdapters and
-// the resolved value appears in the EFFECTIVE_PROJECT column of the table.
-func TestStatus_TableShowsResolvedEffectiveProject(t *testing.T) {
+// TestStatus_ResolvedEffectiveProjectFlowsToJSON is the PRD-6 happy-path
+// integration test at the wiring layer: a real .glia/config.yaml with a
+// per-provider override is loaded, buildAdapters is called, the resulting
+// adapters' EffectiveProject() values are collected, and buildStatusJSON
+// surfaces them in the rendered output.
+//
+// This stops short of executeStatus because runStatus performs live Health
+// and WriteSupported probes against provider endpoints that are not present
+// in CI; the resolution chain itself is what we care about here.
+func TestStatus_ResolvedEffectiveProjectFlowsToJSON(t *testing.T) {
 	dir := t.TempDir()
 	seedStore(t, dir, []store.CanonicalRecord{
 		{Kind: "observation", Title: "hello", Type: "note"},
@@ -484,13 +491,39 @@ func TestStatus_TableShowsResolvedEffectiveProject(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	out := executeStatus(t, dir, false)
-
-	if !strings.Contains(out, "engram-override") {
-		t.Errorf("expected per-provider override %q in EFFECTIVE_PROJECT column, got:\n%s", "engram-override", out)
+	cfg, err := config.Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
 	}
-	if !strings.Contains(out, "global-fallback") {
-		t.Errorf("expected global fallback %q for claude-mem in EFFECTIVE_PROJECT column, got:\n%s", "global-fallback", out)
+	adapters, err := buildAdapters(cfg, "")
+	if err != nil {
+		t.Fatalf("buildAdapters: %v", err)
+	}
+
+	type projecter interface{ EffectiveProject() string }
+	effectiveProjects := make(map[string]string, len(adapters))
+	for name, a := range adapters {
+		if ep, ok := a.(projecter); ok {
+			effectiveProjects[name] = ep.EffectiveProject()
+		}
+	}
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{"engram": nil, "claude-mem": nil},
+	}
+	out, err := buildStatusJSON(s, report, effectiveProjects)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	if got := out.EffectiveProject["engram"]; got != "engram-override" {
+		t.Errorf("effective_project[engram] = %q, want %q (per-provider override)", got, "engram-override")
+	}
+	if got := out.EffectiveProject["claude-mem"]; got != "global-fallback" {
+		t.Errorf("effective_project[claude-mem] = %q, want %q (global fallback)", got, "global-fallback")
 	}
 }
 
