@@ -1543,3 +1543,138 @@ func TestWriteCapability_NilTransport(t *testing.T) {
 		t.Errorf("WriteCapability: got %q, want %q", got, want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 — WriteNative real implementation tests (REQ-CMW-04)
+// ---------------------------------------------------------------------------
+
+// writeNativeTransport is a configurable Transport for WriteNative testing.
+// WriteSupported and SaveMemory are controllable; other methods are no-ops.
+type writeNativeTransport struct {
+	fakeTransport
+	writeSupported  bool
+	saveMemoryResp  *SaveMemoryResponse
+	saveMemoryErr   error
+	saveMemoryCalls []SaveMemoryRequest
+}
+
+func (w *writeNativeTransport) WriteSupported(_ context.Context) bool {
+	return w.writeSupported
+}
+
+func (w *writeNativeTransport) SaveMemory(_ context.Context, req SaveMemoryRequest) (*SaveMemoryResponse, error) {
+	w.saveMemoryCalls = append(w.saveMemoryCalls, req)
+	return w.saveMemoryResp, w.saveMemoryErr
+}
+
+// TestWriteNative_WriteEnabledFalse_ErrUnsupported verifies that when
+// write_enabled=false, WriteNative returns ErrUnsupported without calling
+// the transport (REQ-CMW-04 gate 1).
+func TestWriteNative_WriteEnabledFalse_ErrUnsupported(t *testing.T) {
+	tr := &writeNativeTransport{writeSupported: true}
+	a := New(Config{WriteEnabled: false}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "test", Narrative: "body"}
+	id, err := a.WriteNative(context.Background(), native)
+	if id != "" {
+		t.Errorf("expected empty NativeID, got %q", id)
+	}
+	if !isUnsupported(err) {
+		t.Fatalf("expected ErrUnsupported when write_enabled=false, got %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 0 {
+		t.Errorf("SaveMemory must not be called when write_enabled=false, called %d times", len(tr.saveMemoryCalls))
+	}
+}
+
+// TestWriteNative_ProbeReturnsFalse_ErrUnsupported verifies that when the
+// endpoint probe returns false, WriteNative returns ErrUnsupported
+// (REQ-CMW-04 gate 2).
+func TestWriteNative_ProbeReturnsFalse_ErrUnsupported(t *testing.T) {
+	tr := &writeNativeTransport{writeSupported: false}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "test", Narrative: "body"}
+	id, err := a.WriteNative(context.Background(), native)
+	if id != "" {
+		t.Errorf("expected empty NativeID, got %q", id)
+	}
+	if !isUnsupported(err) {
+		t.Fatalf("expected ErrUnsupported when probe is false, got %v", err)
+	}
+}
+
+// TestWriteNative_Success returns the SaveMemory response ID as NativeID
+// (REQ-CMW-04 happy path).
+func TestWriteNative_Success(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 42},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "hello", Narrative: "world"}
+	id, err := a.WriteNative(context.Background(), native)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(id) != "42" {
+		t.Errorf("NativeID: got %q, want %q", id, "42")
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 SaveMemory call, got %d", len(tr.saveMemoryCalls))
+	}
+}
+
+// TestWriteNative_WrongNativeType_ErrUnsupported verifies that a non-claudeMemRecord
+// native record returns ErrUnsupported (REQ-CMW-04 type guard).
+func TestWriteNative_WrongNativeType_ErrUnsupported(t *testing.T) {
+	tr := &writeNativeTransport{writeSupported: true}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	_, err := a.WriteNative(context.Background(), "not-a-claudeMemRecord")
+	if !isUnsupported(err) {
+		t.Fatalf("expected ErrUnsupported for wrong native type, got %v", err)
+	}
+}
+
+// TestWriteNative_TransportError_Surfaced verifies that a SaveMemory transport
+// error is returned to the caller (REQ-CMW-04 error path).
+func TestWriteNative_TransportError_Surfaced(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryErr:  fmt.Errorf("%w: connection refused", adapter.ErrUnavailable),
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{ID: 0, Title: "t", Narrative: "n"}
+	_, err := a.WriteNative(context.Background(), native)
+	if err == nil {
+		t.Fatal("expected error from SaveMemory, got nil")
+	}
+}
+
+// TestWriteNative_TextFormatting verifies the SaveMemory request body uses
+// "Title\n\nNarrative" format for non-empty narrative (REQ-CMW-04 payload).
+func TestWriteNative_TextFormatting(t *testing.T) {
+	tr := &writeNativeTransport{
+		writeSupported: true,
+		saveMemoryResp: &SaveMemoryResponse{Success: true, ID: 99},
+	}
+	a := New(Config{WriteEnabled: true}, tr)
+
+	native := claudeMemRecord{Title: "My Title", Narrative: "My content body."}
+	if _, err := a.WriteNative(context.Background(), native); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tr.saveMemoryCalls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(tr.saveMemoryCalls))
+	}
+	text := tr.saveMemoryCalls[0].Text
+	if !strings.Contains(text, "My Title") {
+		t.Errorf("payload text should contain title, got: %q", text)
+	}
+	if !strings.Contains(text, "My content body.") {
+		t.Errorf("payload text should contain narrative, got: %q", text)
+	}
+}
