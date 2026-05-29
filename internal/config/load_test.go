@@ -124,15 +124,20 @@ func TestLoad_MalformedProjectConfig(t *testing.T) {
 	}
 }
 
-// TestLoad_MissingProject verifies that missing project field returns error.
-// REQ-CFG validation.
-func TestLoad_MissingProject(t *testing.T) {
+// TestLoad_MissingProjectIsValid verifies that a missing global project field
+// is accepted by Load (PRD-6: project-required validation moved to
+// buildSyncEngine after the --project CLI flag is merged). Downstream code
+// is responsible for failing when no source supplies a project.
+func TestLoad_MissingProjectIsValid(t *testing.T) {
 	dir := t.TempDir()
 	writeProjectConfig(t, dir, "schema_version: 1\n")
 
-	_, err := Load(dir, "/nonexistent/user.yaml")
-	if err == nil {
-		t.Fatal("expected error for missing project, got nil")
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load with empty global project should succeed (validation moved to engine build), got: %v", err)
+	}
+	if cfg.Project != "" {
+		t.Errorf("Project: got %q, want empty", cfg.Project)
 	}
 }
 

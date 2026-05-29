@@ -290,9 +290,9 @@ func validate(c *Config) error {
 	if c.SchemaVersion != 1 {
 		return fmt.Errorf("config: unsupported schema_version %d (want 1)", c.SchemaVersion)
 	}
-	if c.Project == "" {
-		return fmt.Errorf("config: project is required — run `glia init` or set WRAPPER_MEMS_PROJECT")
-	}
+	// Project resolution is validated downstream in buildSyncEngine after the
+	// --project CLI flag is merged (PRD-6). A config with empty global project
+	// is valid here when at least one provider supplies its own override.
 	if c.Providers.Engram.Transport != "cli" && c.Providers.Engram.Transport != "http" {
 		return fmt.Errorf("config: providers.engram.transport must be \"cli\" or \"http\", got %q", c.Providers.Engram.Transport)
 	}
