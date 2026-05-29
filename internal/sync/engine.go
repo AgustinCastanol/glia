@@ -260,11 +260,14 @@ func (e *Engine) gitCommit() {
 func (e *Engine) Status(ctx context.Context) (*StatusReport, error) {
 	providers := e.activeProviders()
 	report := &StatusReport{
-		ProviderHealth: make(map[string]error, len(providers)),
+		ProviderHealth:          make(map[string]error, len(providers)),
+		ProviderWriteCapability: make(map[string]string, len(providers)),
 	}
 
 	for _, a := range providers {
 		report.ProviderHealth[a.Name()] = a.Health(ctx)
+		// REQ-CMW-09: surface write capability per provider for glia status display.
+		report.ProviderWriteCapability[a.Name()] = a.WriteCapability()
 	}
 
 	// Expose current conflicts as summaries.

@@ -266,6 +266,58 @@ func TestResolve_InvalidDupIndex_Zero(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Phase 8 — WriteCapability in StatusReport (REQ-CMW-09)
+// ---------------------------------------------------------------------------
+
+// TestStatus_WriteCapabilityPopulated verifies that Engine.Status populates
+// ProviderWriteCapability for each provider (REQ-CMW-09).
+func TestStatus_WriteCapabilityPopulated(t *testing.T) {
+	s, _ := openTestStore(t)
+	adapters := map[string]adapter.Adapter{
+		"engram":     &fakeAdapter{name: "engram"},
+		"claude-mem": &fakeAdapter{name: "claude-mem"},
+	}
+	e := New(s, adapters, Default(), Options{}, io.Discard)
+
+	report, err := e.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status() error: %v", err)
+	}
+	if report.ProviderWriteCapability == nil {
+		t.Fatal("ProviderWriteCapability must not be nil")
+	}
+	for name := range adapters {
+		cap, ok := report.ProviderWriteCapability[name]
+		if !ok {
+			t.Errorf("ProviderWriteCapability missing entry for %q", name)
+		}
+		if cap == "" {
+			t.Errorf("ProviderWriteCapability[%q] must not be empty", name)
+		}
+	}
+}
+
+// TestStatus_WriteCapabilityMatchesAdapter verifies that the capability string
+// in StatusReport exactly matches what WriteCapability() returns on each adapter.
+func TestStatus_WriteCapabilityMatchesAdapter(t *testing.T) {
+	s, _ := openTestStore(t)
+	adapters := map[string]adapter.Adapter{
+		"engram": &fakeAdapter{name: "engram"},
+	}
+	e := New(s, adapters, Default(), Options{}, io.Discard)
+
+	report, err := e.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status() error: %v", err)
+	}
+	got := report.ProviderWriteCapability["engram"]
+	want := adapters["engram"].WriteCapability()
+	if got != want {
+		t.Errorf("ProviderWriteCapability[engram] = %q, want %q", got, want)
+	}
+}
+
 // TestActiveProviders_FilterApplied verifies activeProviders respects ProviderFilter.
 func TestActiveProviders_FilterApplied(t *testing.T) {
 	s, _ := openTestStore(t)
