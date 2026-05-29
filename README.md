@@ -199,6 +199,64 @@ store.ReadLive → FromCanonical → WriteNative (engram save via CLI)
 
 ---
 
+## Configuration
+
+### Per-Provider Project Override (PRD-6)
+
+Each provider block in `.glia/config.yaml` supports an optional `project` field that
+overrides the global `project` value for that provider only. This lets different providers
+use different project namespaces in the same glia workspace.
+
+```yaml
+project: my-global-project        # global fallback
+
+providers:
+  engram:
+    enabled: true
+    project: eng-specific          # optional: overrides global for this provider only
+
+  claude-mem:
+    enabled: true
+    project: cm-specific           # optional: overrides global for this provider only
+```
+
+**Resolution order** (highest to lowest priority):
+
+1. `--project <name>` CLI flag
+2. `providers.<x>.project` (per-provider override in config)
+3. `project:` (global `Config.Project`)
+
+Resolution is per-provider — engram and claude-mem may resolve to different effective
+projects in the same run.
+
+**Important limitation — claudemem write path**: the claudemem write path posts a plain
+text payload to the claude-mem worker. It does NOT carry a project field to the server;
+project assignment on the server side is determined by the worker itself. The
+`providers.claude-mem.project` override affects READ filtering (what records are pulled
+from claude-mem into the canonical store) but has no effect on the write side (what
+project the worker assigns to saved records).
+
+The effective project per provider is visible in `glia status`:
+
+```
+PROVIDER    STATUS   WRITE_CAPABILITY  EFFECTIVE_PROJECT  LAST_PUSHED  LAST_PULLED
+engram      healthy  read+write        eng-specific       -            -
+claude-mem  healthy  read-only         cm-specific        -            -
+```
+
+And in `glia status --json` under the `effective_project` key:
+
+```json
+{
+  "effective_project": {
+    "engram": "eng-specific",
+    "claude-mem": "cm-specific"
+  }
+}
+```
+
+---
+
 ## Quick Start (Development)
 
 ```bash
