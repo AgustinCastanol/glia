@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"time"
 
@@ -204,9 +205,7 @@ func (e *Engine) Sync(ctx context.Context) (*RunReport, error) {
 		WriteErrors:    pullReport.WriteErrors + pushReport.WriteErrors,
 		Conflicts:      pullReport.Conflicts + pushReport.Conflicts,
 	}
-	for p, r := range pullReport.PerProvider {
-		merged.PerProvider[p] = r
-	}
+	maps.Copy(merged.PerProvider, pullReport.PerProvider)
 	for p, r := range pushReport.PerProvider {
 		existing := merged.PerProvider[p]
 		existing.Pulled += r.Pulled
