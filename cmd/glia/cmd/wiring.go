@@ -45,6 +45,9 @@ func buildAdapters(cfg *config.Config) (map[string]adapter.Adapter, error) {
 	}
 
 	if cfg.Providers.ClaudeMem.Enabled {
+		// Dereference the *bool pointer. config.Load always fills nil → true, so
+		// WriteEnabled is never nil here. Defensive fallback: nil → false (safe).
+		writeEnabled := cfg.Providers.ClaudeMem.WriteEnabled != nil && *cfg.Providers.ClaudeMem.WriteEnabled
 		tr := claudemem.NewHTTPTransport(cfg.Providers.ClaudeMem.HTTPBaseURL)
 		out["claude-mem"] = claudemem.New(claudemem.Config{
 			Enabled:            true,
@@ -53,6 +56,7 @@ func buildAdapters(cfg *config.Config) (map[string]adapter.Adapter, error) {
 			ProjectPathMapping: cfg.Providers.ClaudeMem.ProjectPathMapping,
 			ExcludedSessionIDs: cfg.Privacy.ExcludedSessionIDs,
 			Author:             author,
+			WriteEnabled:       writeEnabled,
 		}, tr)
 	}
 

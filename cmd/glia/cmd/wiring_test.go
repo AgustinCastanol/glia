@@ -3,6 +3,7 @@ package cmd
 import (
 	"testing"
 
+	"github.com/agustincastanol/glia/internal/adapter/claudemem"
 	"github.com/agustincastanol/glia/internal/config"
 )
 
@@ -96,4 +97,52 @@ func TestBuildAdapters_EngineAdapterNamesMatch(t *testing.T) {
 	if a, ok := adapters["claude-mem"]; !ok || a.Name() != "claude-mem" {
 		t.Errorf("claude-mem adapter Name()=%q, want %q", adapters["claude-mem"].Name(), "claude-mem")
 	}
+}
+
+// TestBuildAdapters_WriteEnabledPropagated verifies that config.WriteEnabled is
+// correctly propagated from the *bool config field into the claudemem.Config
+// bool field (REQ-CMW-04 wiring fix). Before the fix, WriteEnabled was silently
+// dropped and the adapter always defaulted to write_enabled=false.
+func TestBuildAdapters_WriteEnabledPropagated(t *testing.T) {
+	t.Run("write_enabled=true propagated", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Providers.Engram.Enabled = false
+		cfg.Providers.ClaudeMem.Enabled = true
+		writeEnabled := true
+		cfg.Providers.ClaudeMem.WriteEnabled = &writeEnabled
+
+		adapters, err := buildAdapters(cfg)
+		if err != nil {
+			t.Fatalf("buildAdapters: %v", err)
+		}
+		a, ok := adapters["claude-mem"].(*claudemem.ClaudeMemAdapter)
+		if !ok {
+			t.Fatalf("expected *claudemem.ClaudeMemAdapter, got %T", adapters["claude-mem"])
+		}
+		// WriteCapability() returns "read-only (write_enabled=false)" when WriteEnabled==false.
+		// With the fix applied it must NOT return that string.
+		if cap := a.WriteCapability(); cap == "read-only (write_enabled=false)" {
+			t.Errorf("WriteCapability=%q: WriteEnabled was not propagated (got write_enabled=false)", cap)
+		}
+	})
+
+	t.Run("write_enabled=false propagated", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Providers.Engram.Enabled = false
+		cfg.Providers.ClaudeMem.Enabled = true
+		writeEnabled := false
+		cfg.Providers.ClaudeMem.WriteEnabled = &writeEnabled
+
+		adapters, err := buildAdapters(cfg)
+		if err != nil {
+			t.Fatalf("buildAdapters: %v", err)
+		}
+		a, ok := adapters["claude-mem"].(*claudemem.ClaudeMemAdapter)
+		if !ok {
+			t.Fatalf("expected *claudemem.ClaudeMemAdapter, got %T", adapters["claude-mem"])
+		}
+		if cap := a.WriteCapability(); cap != "read-only (write_enabled=false)" {
+			t.Errorf("WriteCapability=%q: expected read-only when write_enabled=false", cap)
+		}
+	})
 }
