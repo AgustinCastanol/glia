@@ -92,7 +92,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	// Build adapters for health checks (best-effort; nil if config unavailable).
 	var adapters map[string]adapter.Adapter
 	if loadedConfig != nil {
-		adapters, _ = buildAdapters(loadedConfig)
+		adapters, _ = buildAdapters(loadedConfig, rootFlags.project)
 	}
 
 	// Run all checks in order (ADR-D8: data first, providers, git, lock).
