@@ -203,6 +203,9 @@ func mergeEngram(dst *EngramProviderConfig, src *EngramProviderConfig, m map[str
 	if _, ok := m["http_base_url"]; ok {
 		dst.HTTPBaseURL = src.HTTPBaseURL
 	}
+	if _, ok := m["project"]; ok {
+		dst.Project = src.Project
+	}
 }
 
 func mergeClaudeMem(dst *ClaudeMemProviderConfig, src *ClaudeMemProviderConfig, m map[string]any) {
@@ -231,6 +234,9 @@ func mergeClaudeMem(dst *ClaudeMemProviderConfig, src *ClaudeMemProviderConfig, 
 	// This preserves the default (true) when the key is absent.
 	if _, ok := m["write_enabled"]; ok {
 		dst.WriteEnabled = src.WriteEnabled
+	}
+	if _, ok := m["project"]; ok {
+		dst.Project = src.Project
 	}
 }
 

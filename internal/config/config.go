@@ -30,6 +30,10 @@ type EngramProviderConfig struct {
 	Transport   string `yaml:"transport"`      // "cli" | "http"
 	CLIPath     string `yaml:"cli_path"`
 	HTTPBaseURL string `yaml:"http_base_url"`
+	// Project is an optional per-provider project name override.
+	// When non-empty it takes precedence over Config.Project (the global fallback)
+	// unless the --project CLI flag is also set (which always wins).
+	Project string `yaml:"project,omitempty"`
 }
 
 // ClaudeMemProviderConfig holds claude-mem-specific options.
@@ -39,6 +43,12 @@ type ClaudeMemProviderConfig struct {
 	HTTPBaseURL        string            `yaml:"http_base_url"`
 	WorkerPIDPath      string            `yaml:"worker_pid_path"`
 	ProjectPathMapping map[string]string `yaml:"project_path_mapping"`
+	// Project is an optional per-provider project name override.
+	// When non-empty it takes precedence over Config.Project (the global fallback)
+	// unless the --project CLI flag is also set (which always wins).
+	// NOTE: the write path payload (POST /api/memory/save) does not include a
+	// project field — only the ListNative filter uses this resolved value.
+	Project string `yaml:"project,omitempty"`
 	// WriteEnabled controls whether glia will push canonical records back to the
 	// claude-mem worker via POST /api/memory/save. A pointer distinguishes
 	// "absent from config" (nil) from "explicitly set to false". Load fills nil
