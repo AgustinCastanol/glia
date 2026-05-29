@@ -127,8 +127,10 @@ func (e *Engine) pullProvider(ctx context.Context, a adapter.Adapter) (ProviderR
 				continue
 			}
 
-			// Hard per-record error: warn, skip, do NOT advance watermark (REQ-SE-20 note).
+			// Non-fatal per-record write error (REQ-CMW-08): warn, count, skip.
+			// Do NOT add to HardErrors — one record failure must not abort the run.
 			fmt.Fprintf(e.w, "WARN pull %s: WriteNative %s: %v\n", a.Name(), rec.CanonicalID, writeErr)
+			result.WriteErrors++
 			// Stop advancing lastSuccessTime past this point.
 			continue
 		}
