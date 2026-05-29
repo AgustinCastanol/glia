@@ -15,7 +15,7 @@ func TestBuildAdapters_EnabledOnlyReturned(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.ClaudeMem.Enabled = false
 
-	adapters, err := buildAdapters(cfg)
+	adapters, err := buildAdapters(cfg, "")
 	if err != nil {
 		t.Fatalf("buildAdapters: unexpected error: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestBuildAdapters_BothEnabled(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.ClaudeMem.Enabled = true
 
-	adapters, err := buildAdapters(cfg)
+	adapters, err := buildAdapters(cfg, "")
 	if err != nil {
 		t.Fatalf("buildAdapters: unexpected error: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestBuildAdapters_NoneEnabled(t *testing.T) {
 	cfg.Providers.Engram.Enabled = false
 	cfg.Providers.ClaudeMem.Enabled = false
 
-	adapters, err := buildAdapters(cfg)
+	adapters, err := buildAdapters(cfg, "")
 	if err != nil {
 		t.Fatalf("buildAdapters: unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestBuildAdapters_UnknownEngramTransportReturnsError(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.Engram.Transport = "grpc" // unknown
 
-	_, err := buildAdapters(cfg)
+	_, err := buildAdapters(cfg, "")
 	if err == nil {
 		t.Fatal("expected error for unknown engram transport, got nil")
 	}
@@ -86,7 +86,7 @@ func TestBuildAdapters_EngineAdapterNamesMatch(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.ClaudeMem.Enabled = true
 
-	adapters, err := buildAdapters(cfg)
+	adapters, err := buildAdapters(cfg, "")
 	if err != nil {
 		t.Fatalf("buildAdapters: %v", err)
 	}
@@ -96,6 +96,142 @@ func TestBuildAdapters_EngineAdapterNamesMatch(t *testing.T) {
 	}
 	if a, ok := adapters["claude-mem"]; !ok || a.Name() != "claude-mem" {
 		t.Errorf("claude-mem adapter Name()=%q, want %q", adapters["claude-mem"].Name(), "claude-mem")
+	}
+}
+
+// TestBuildAdapters_PerProviderProjectPropagated verifies that when a provider
+// has a per-provider project override, the resolved project is passed to the
+// adapter (not the global config.Project). PRD-6 wiring requirement.
+func TestBuildAdapters_PerProviderProjectPropagated(t *testing.T) {
+	t.Run("engram per-provider project used when set", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Project = "global"
+		cfg.Providers.Engram.Enabled = true
+		cfg.Providers.Engram.Project = "eng-specific"
+		cfg.Providers.ClaudeMem.Enabled = false
+
+		adapters, err := buildAdapters(cfg, "")
+		if err != nil {
+			t.Fatalf("buildAdapters: %v", err)
+		}
+		a, ok := adapters["engram"]
+		if !ok {
+			t.Fatal("expected engram adapter")
+		}
+		// The engram adapter must use "eng-specific" as its effective project.
+		// We verify via the exported EffectiveProject() accessor.
+		type projecter interface{ EffectiveProject() string }
+		ep, ok := a.(projecter)
+		if !ok {
+			t.Fatalf("engram adapter does not implement EffectiveProject(); got %T", a)
+		}
+		if got := ep.EffectiveProject(); got != "eng-specific" {
+			t.Errorf("EffectiveProject()=%q, want %q", got, "eng-specific")
+		}
+	})
+
+	t.Run("global project used when no per-provider override", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Project = "global"
+		cfg.Providers.Engram.Enabled = true
+		cfg.Providers.Engram.Project = "" // no override
+		cfg.Providers.ClaudeMem.Enabled = false
+
+		adapters, err := buildAdapters(cfg, "")
+		if err != nil {
+			t.Fatalf("buildAdapters: %v", err)
+		}
+		a, ok := adapters["engram"]
+		if !ok {
+			t.Fatal("expected engram adapter")
+		}
+		type projecter interface{ EffectiveProject() string }
+		ep, ok := a.(projecter)
+		if !ok {
+			t.Fatalf("engram adapter does not implement EffectiveProject(); got %T", a)
+		}
+		if got := ep.EffectiveProject(); got != "global" {
+			t.Errorf("EffectiveProject()=%q, want %q", got, "global")
+		}
+	})
+
+	t.Run("claudemem per-provider project used when set", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Project = "global"
+		cfg.Providers.Engram.Enabled = false
+		cfg.Providers.ClaudeMem.Enabled = true
+		cfg.Providers.ClaudeMem.Project = "cm-specific"
+
+		adapters, err := buildAdapters(cfg, "")
+		if err != nil {
+			t.Fatalf("buildAdapters: %v", err)
+		}
+		a, ok := adapters["claude-mem"]
+		if !ok {
+			t.Fatal("expected claude-mem adapter")
+		}
+		type projecter interface{ EffectiveProject() string }
+		ep, ok := a.(projecter)
+		if !ok {
+			t.Fatalf("claude-mem adapter does not implement EffectiveProject(); got %T", a)
+		}
+		if got := ep.EffectiveProject(); got != "cm-specific" {
+			t.Errorf("EffectiveProject()=%q, want %q", got, "cm-specific")
+		}
+	})
+}
+
+// TestResolveEngineProject verifies PRD-6 precedence and the empty-project guard
+// (Phase 2: validation moved to buildSyncEngine via resolveEngineProject).
+func TestResolveEngineProject(t *testing.T) {
+	tests := []struct {
+		name        string
+		cliFlag     string
+		global      string
+		wantProject string
+		wantErr     bool
+	}{
+		{
+			name:        "CLI flag wins over global",
+			cliFlag:     "cli-project",
+			global:      "global-project",
+			wantProject: "cli-project",
+		},
+		{
+			name:        "global used when CLI flag empty",
+			cliFlag:     "",
+			global:      "global-project",
+			wantProject: "global-project",
+		},
+		{
+			name:    "error when both empty",
+			cliFlag: "",
+			global:  "",
+			wantErr: true,
+		},
+		{
+			name:        "CLI flag used when global empty",
+			cliFlag:     "cli-only",
+			global:      "",
+			wantProject: "cli-only",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveEngineProject(tc.cliFlag, tc.global)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("resolveEngineProject(%q, %q): expected error, got nil", tc.cliFlag, tc.global)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveEngineProject(%q, %q): unexpected error: %v", tc.cliFlag, tc.global, err)
+			}
+			if got != tc.wantProject {
+				t.Errorf("resolveEngineProject(%q, %q) = %q, want %q", tc.cliFlag, tc.global, got, tc.wantProject)
+			}
+		})
 	}
 }
 
@@ -111,7 +247,7 @@ func TestBuildAdapters_WriteEnabledPropagated(t *testing.T) {
 		writeEnabled := true
 		cfg.Providers.ClaudeMem.WriteEnabled = &writeEnabled
 
-		adapters, err := buildAdapters(cfg)
+		adapters, err := buildAdapters(cfg, "")
 		if err != nil {
 			t.Fatalf("buildAdapters: %v", err)
 		}
@@ -133,7 +269,7 @@ func TestBuildAdapters_WriteEnabledPropagated(t *testing.T) {
 		writeEnabled := false
 		cfg.Providers.ClaudeMem.WriteEnabled = &writeEnabled
 
-		adapters, err := buildAdapters(cfg)
+		adapters, err := buildAdapters(cfg, "")
 		if err != nil {
 			t.Fatalf("buildAdapters: %v", err)
 		}
