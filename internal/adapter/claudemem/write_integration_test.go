@@ -141,7 +141,7 @@ func TestWriteNative_Integration_NetworkError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWriteNative_Integration_Idempotency(t *testing.T) {
-	var saveCalls int64 // atomic counter
+	var saveCalls atomic.Int64
 
 	srv := saveServer(t, func(w http.ResponseWriter, r *http.Request) {
 		var req SaveMemoryRequest
@@ -152,11 +152,10 @@ func TestWriteNative_Integration_Idempotency(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		atomic.AddInt64(&saveCalls, 1)
+		id := saveCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		// Return distinct IDs per call so the caller can also verify them.
-		id := atomic.LoadInt64(&saveCalls)
 		_ = json.NewEncoder(w).Encode(SaveMemoryResponse{Success: true, ID: id})
 	})
 	defer srv.Close()
@@ -174,7 +173,7 @@ func TestWriteNative_Integration_Idempotency(t *testing.T) {
 	}
 
 	// Adapter must not suppress the second call.
-	if got := atomic.LoadInt64(&saveCalls); got != 2 {
+	if got := saveCalls.Load(); got != 2 {
 		t.Errorf("expected 2 POST /api/memory/save calls, got %d", got)
 	}
 	// IDs must differ (server returned 1 then 2).
