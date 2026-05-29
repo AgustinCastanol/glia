@@ -14,12 +14,17 @@ import (
 // Only enabled providers are included in the returned map. Disabled providers
 // are silently omitted — their absence is not an error.
 //
+// cliProject is the value of the --project flag (empty string if not set).
+// It is passed to config.ResolveProject as the highest-priority input so that
+// per-provider and global project overrides honour PRD-6 precedence:
+//   CLI flag > providers.<x>.project > Config.Project
+//
 // On any construction failure (e.g. unknown transport type) the error is
 // returned immediately so callers (status, sync, doctor) can surface it.
 //
 // The returned map uses canonical provider names as keys ("engram",
 // "claude-mem"). A nil map (all providers disabled) is valid and not an error.
-func buildAdapters(cfg *config.Config) (map[string]adapter.Adapter, error) {
+func buildAdapters(cfg *config.Config, cliProject string) (map[string]adapter.Adapter, error) {
 	author := identity.Resolve(cfg.Identity.Author)
 	out := make(map[string]adapter.Adapter)
 
@@ -41,6 +46,7 @@ func buildAdapters(cfg *config.Config) (map[string]adapter.Adapter, error) {
 			CLIPath:     cfg.Providers.Engram.CLIPath,
 			HTTPBaseURL: cfg.Providers.Engram.HTTPBaseURL,
 			Author:      author,
+			Project:     config.ResolveProject(cliProject, cfg.Providers.Engram.Project, cfg.Project),
 		}, tr)
 	}
 
@@ -57,8 +63,23 @@ func buildAdapters(cfg *config.Config) (map[string]adapter.Adapter, error) {
 			ExcludedSessionIDs: cfg.Privacy.ExcludedSessionIDs,
 			Author:             author,
 			WriteEnabled:       writeEnabled,
+			Project:            config.ResolveProject(cliProject, cfg.Providers.ClaudeMem.Project, cfg.Project),
 		}, tr)
 	}
 
 	return out, nil
+}
+
+// resolveEngineProject returns the effective project for the sync engine by
+// applying PRD-6 precedence: CLI flag > global Config.Project.
+// Returns an error if the resolved project is empty — an empty project would
+// cause all adapters to return zero records, which is never intentional.
+func resolveEngineProject(cliFlag, globalProject string) (string, error) {
+	if cliFlag != "" {
+		return cliFlag, nil
+	}
+	if globalProject != "" {
+		return globalProject, nil
+	}
+	return "", fmt.Errorf("project is required: set it in config.yaml (project:) or pass --project <name>")
 }

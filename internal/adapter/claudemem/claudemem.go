@@ -101,6 +101,14 @@ type Config struct {
 	// "read-only (write_enabled=false)" string. Defaults to true when not set
 	// by the wiring layer; the wiring layer reads this from config.ClaudeMemProviderConfig.WriteEnabled.
 	WriteEnabled bool
+	// Project is the effective project name resolved at wiring time via
+	// config.ResolveProject (PRD-6). Precedence: CLI flag > per-provider
+	// providers.claude-mem.project > global Config.Project.
+	// When set, ListNative uses this value as the project filter instead of
+	// the project parameter.
+	// NOTE: the write path payload (POST /api/memory/save) does not include a
+	// project field — only the ListNative filter uses this resolved value.
+	Project string
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +261,12 @@ func (a *ClaudeMemAdapter) Name() string {
 	return "claude-mem"
 }
 
+// EffectiveProject returns the project name that this adapter will use for
+// filtering, as resolved at construction time (PRD-6).
+func (a *ClaudeMemAdapter) EffectiveProject() string {
+	return a.cfg.Project
+}
+
 // Health probes the claude-mem daemon (REQ-CM-04).
 func (a *ClaudeMemAdapter) Health(ctx context.Context) error {
 	if a.transport == nil {
@@ -272,7 +286,14 @@ func (a *ClaudeMemAdapter) Health(ctx context.Context) error {
 //
 // claude-mem observations are append-only (no updated_at field exists in the
 // API). The since-filter is rebased on created_at (D7).
+//
+// PRD-6: if cfg.Project is non-empty (resolved at wiring time via ResolveProject),
+// it overrides the project parameter so the per-provider override takes effect.
 func (a *ClaudeMemAdapter) ListNative(ctx context.Context, project string, since time.Time) ([]adapter.NativeID, error) {
+	// PRD-6: per-provider project wins over the engine-supplied parameter.
+	if a.cfg.Project != "" {
+		project = a.cfg.Project
+	}
 	if a.transport == nil {
 		return nil, fmt.Errorf("%w: transport is nil", adapter.ErrUnavailable)
 	}

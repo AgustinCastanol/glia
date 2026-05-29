@@ -31,6 +31,12 @@ type Config struct {
 	// Author is pre-resolved from identity.Resolve() by the wiring helper.
 	// If empty, New() resolves it via identity.Resolve("").
 	Author string
+	// Project is the effective project name resolved at wiring time via
+	// config.ResolveProject (PRD-6). Precedence: CLI flag > per-provider
+	// providers.engram.project > global Config.Project.
+	// When set, ListNative uses this value as the project filter instead of
+	// the project parameter, and FromCanonical populates rec.Project with it.
+	Project string
 	// Commander is an optional override for the CLI commander. When nil,
 	// New() constructs an execCommander using CLIPath. Set for unit tests
 	// to inject a fake without spawning a real binary.
@@ -140,6 +146,12 @@ func (a *EngramAdapter) Name() string {
 	return "engram"
 }
 
+// EffectiveProject returns the project name that this adapter will use for
+// filtering and record population, as resolved at construction time (PRD-6).
+func (a *EngramAdapter) EffectiveProject() string {
+	return a.cfg.Project
+}
+
 // rfc3339NanoFixed is an explicit 9-digit nanosecond format with UTC Z suffix.
 // time.RFC3339Nano truncates trailing zeros (e.g. "2026-05-16T01:33:00Z" instead
 // of "2026-05-16T01:33:00.000000000Z"), which breaks the byte-comparable invariant
@@ -237,7 +249,14 @@ func parseExportTimestamp(ts string) (string, error) {
 // which rejected empty queries in engram v1.15. The export endpoint provides
 // deterministic full enumeration; results are filtered client-side by project,
 // scope, and updated_at >= since (REQ-ENG-11, REQ-ENG-12, REQ-ENG-13, REQ-AC-07).
+//
+// PRD-6: if cfg.Project is non-empty (resolved at wiring time via ResolveProject),
+// it overrides the project parameter so the per-provider override takes effect.
 func (a *EngramAdapter) ListNative(ctx context.Context, project string, since time.Time) ([]adapter.NativeID, error) {
+	// PRD-6: per-provider project wins over the engine-supplied parameter.
+	if a.cfg.Project != "" {
+		project = a.cfg.Project
+	}
 	if a.transport == nil {
 		return nil, fmt.Errorf("%w: ListNative requires a Transport (nil provided)", adapter.ErrUnsupported)
 	}
@@ -493,6 +512,10 @@ func (a *EngramAdapter) FromCanonical(canonical store.CanonicalRecord) (adapter.
 		// SessionID: best-effort; engram CLI may not accept it (REQ-ENG-22).
 		SessionID: canonical.Origin.SessionID,
 		Scope:     "project",
+		// PRD-6: stamp rec.Project from cfg so WriteNative sends --project <P> to
+		// the CLI. When cfg.Project is empty the record has no project override and
+		// WriteNative omits the --project flag (preserving prior behavior).
+		Project: a.cfg.Project,
 		// CreatedAt is NOT set — engram assigns its own timestamp on save (REQ-ENG-22).
 		// TODO: tags round-trip — engram CLI v1.15 has no tags field; add when upstream supports it.
 	}

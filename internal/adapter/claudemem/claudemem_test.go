@@ -1199,6 +1199,56 @@ func TestListNative_CrossProjectIsolation(t *testing.T) {
 	}
 }
 
+// TestListNative_CfgProject_OverridesParameter verifies PRD-6: when cfg.Project
+// is set, ListNative uses it as the project filter instead of the project
+// parameter passed by the engine.
+func TestListNative_CfgProject_OverridesParameter(t *testing.T) {
+	createdAt := "2026-05-16T10:00:00Z"
+	items := []json.RawMessage{
+		makeRawItem(1, "configured-project", createdAt),
+		makeRawItem(2, "other-project", createdAt),
+	}
+
+	ft := &fakeTransport{pages: buildPages(items)}
+	a := New(Config{Project: "configured-project"}, ft)
+
+	// Engine passes "other-project" as the parameter; cfg.Project should win.
+	ids, err := a.ListNative(context.Background(), "other-project", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 ID (cfg.Project wins), got %d: %v", len(ids), ids)
+	}
+	if string(ids[0]) != "1" {
+		t.Errorf("expected ID 1 (configured-project record), got %q", ids[0])
+	}
+}
+
+// TestListNative_CfgProjectEmpty_UsesParameter verifies backward compat: when
+// cfg.Project is empty, the project parameter is used as-is.
+func TestListNative_CfgProjectEmpty_UsesParameter(t *testing.T) {
+	createdAt := "2026-05-16T10:00:00Z"
+	items := []json.RawMessage{
+		makeRawItem(10, "param-project", createdAt),
+		makeRawItem(20, "other-project", createdAt),
+	}
+
+	ft := &fakeTransport{pages: buildPages(items)}
+	a := New(Config{Project: ""}, ft)
+
+	ids, err := a.ListNative(context.Background(), "param-project", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 ID for param-project, got %d: %v", len(ids), ids)
+	}
+	if string(ids[0]) != "10" {
+		t.Errorf("expected ID 10, got %q", ids[0])
+	}
+}
+
 // TestListNative_TimestampNormalization verifies Scenario H: SQLite-format
 // created_at is normalized correctly and passes the since filter as expected.
 func TestListNative_TimestampNormalization(t *testing.T) {
