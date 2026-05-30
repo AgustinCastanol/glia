@@ -21,7 +21,7 @@ The sync engine is the only component that:
 
 ## 2. Goals
 
-- A simple, predictable CLI: `wrapper-mems sync [pull|push]` covers 95% of usage.
+- A simple, predictable CLI: `glia sync [pull|push]` covers 95% of usage.
 - Append-only writes to `memory.jsonl` so git merges stay sane.
 - Graceful degradation: a missing or broken provider produces a warning, not a crash, and the rest of the sync continues.
 - Idempotence: re-running `sync` with no changes is a no-op (no spurious file writes, no spurious commits).
@@ -38,23 +38,23 @@ The sync engine is the only component that:
 ## 4. Command Surface
 
 ```
-wrapper-mems init                          # create .wrapper-mems/, schema.json, .gitignore entries
-wrapper-mems sync                          # pull then push, all enabled providers
-wrapper-mems sync pull                     # canonical JSONL -> local providers
-wrapper-mems sync push                     # local providers -> canonical JSONL
-wrapper-mems sync --dry-run                # show changes without writing
-wrapper-mems sync --provider engram        # restrict to one provider
-wrapper-mems sync --mirror-engram          # also run `engram sync` on push (PRD-1 §5.6)
-wrapper-mems sync --commit                 # also `git add .wrapper-mems/ && git commit` after success
-wrapper-mems status                        # health of all providers + last sync timestamps
-wrapper-mems show [--kind K] [--type T]    # render memory.jsonl in human-friendly form
+glia init                          # create .glia/, schema.json, .gitignore entries
+glia sync                          # pull then push, all enabled providers
+glia sync pull                     # canonical JSONL -> local providers
+glia sync push                     # local providers -> canonical JSONL
+glia sync --dry-run                # show changes without writing
+glia sync --provider engram        # restrict to one provider
+glia sync --mirror-engram          # also run `engram sync` on push (PRD-1 §5.6)
+glia sync --commit                 # also `git add .glia/ && git commit` after success
+glia status                        # health of all providers + last sync timestamps
+glia show [--kind K] [--type T]    # render memory.jsonl in human-friendly form
 ```
 
-**Default behavior of `wrapper-mems sync` (no args):** pull then push, all enabled providers, no mirror, no commit. Writes only to `.wrapper-mems/`.
+**Default behavior of `glia sync` (no args):** pull then push, all enabled providers, no mirror, no commit. Writes only to `.glia/`.
 
 ## 5. State and Watermarks
 
-Sync state lives in `.wrapper-mems/index.json` (gitignored, per PRD-0 §10.4). New top-level field:
+Sync state lives in `.glia/index.json` (gitignored, per PRD-0 §10.4). New top-level field:
 
 ```jsonc
 {
@@ -196,14 +196,14 @@ The loser is **NOT** removed from `memory.jsonl` (append-only). It's recorded in
 
 ### 7.3 Manual override
 
-`wrapper-mems sync resolve <canonical_id> --keep <line_number>` lets a user force a different winner by appending a `revision = N+2` superseding line that mirrors the chosen one. The conflict entry is then cleared.
+`glia sync resolve <canonical_id> --keep <line_number>` lets a user force a different winner by appending a `revision = N+2` superseding line that mirrors the chosen one. The conflict entry is then cleared.
 
 ## 8. Mirror with `engram sync`
 
 Per PRD-1 §5.6, opt-in via `--mirror-engram` or project config:
 
 ```yaml
-# .wrapper-mems/config.yaml
+# .glia/config.yaml
 mirror_engram: true
 ```
 
@@ -221,29 +221,29 @@ Disabled by default. The engram sub-team that uses `engram sync` standalone keep
 | Provider's `Health()` fails                    | Warn ("provider X unavailable, skipping"); continue with others; exit code 0 if any provider succeeded, else 2. |
 | `ReadNative` fails on one record               | Warn (`record id, error`); skip that record; continue.         |
 | `WriteNative` fails on one record              | Warn; skip; continue. `last_pulled_at` is NOT advanced past the failed record's timestamp, so we retry next run. |
-| `memory.jsonl` corrupt (invalid JSON on a line)| Refuse to run; emit a `wrapper-mems doctor` recommendation.    |
+| `memory.jsonl` corrupt (invalid JSON on a line)| Refuse to run; emit a `glia doctor` recommendation.    |
 | `memory.jsonl` and `schema.json` mismatch      | Refuse to run; emit clear error.                               |
 | Network/IO error mid-append                    | The partial file is detected on next run (last line incomplete) and truncated to last newline before continuing. |
 
-`wrapper-mems status` exit codes:
+`glia status` exit codes:
 
 - `0` — all providers healthy
 - `1` — at least one provider degraded
-- `2` — wrapper-mems itself misconfigured (no `.wrapper-mems/`, invalid schema)
+- `2` — glia itself misconfigured (no `.glia/`, invalid schema)
 
 ## 10. Open Questions
 
 1. **Delete propagation**: v1 does NOT propagate canonical deletes (tombstones) into providers. The canonical record is marked deleted, but the local engram still has its copy. Acceptable for v1 (deletes are rare); revisit in v1.1 with a `--prune` flag.
 2. **Batch size for pull/push**: should there be a max records per run? Currently unbounded. If a fresh install pulls 10k records, the first run will be long. Acceptable for v1.
 3. **Cross-provider logical dedup**: an observation captured both in engram (by user A) and in claude-mem (by user B, as part of a session summary) will land as two distinct canonical records. v1 does not try to dedup. v2 might offer a "merge candidates" UI in the TUI.
-4. **Concurrency on the same machine**: if two `wrapper-mems sync` run simultaneously (e.g. user runs it manually while a cron fires), `memory.jsonl` could interleave appends. Solution: lockfile at `.wrapper-mems/.lock` (PID + acquired_at). Refuse to run if locked. Confirm this is enough for v1.
-5. **What does `wrapper-mems sync` do when run OUTSIDE a repo with `.wrapper-mems/`?** Refuse with a clear message: "no canonical store found — run `wrapper-mems init` first."
+4. **Concurrency on the same machine**: if two `glia sync` run simultaneously (e.g. user runs it manually while a cron fires), `memory.jsonl` could interleave appends. Solution: lockfile at `.glia/.lock` (PID + acquired_at). Refuse to run if locked. Confirm this is enough for v1.
+5. **What does `glia sync` do when run OUTSIDE a repo with `.glia/`?** Refuse with a clear message: "no canonical store found — run `glia init` first."
 
 ## 11. Decision Required Before PRD-4 (TUI)
 
 None blocking. PRD-4 builds a TUI on top of the commands defined here. The TUI needs:
 
-- A read view of `memory.jsonl` (already available via `wrapper-mems show`).
-- A status view (already via `wrapper-mems status`).
-- A conflict resolution flow (already specced as `wrapper-mems sync resolve` in §7.3).
+- A read view of `memory.jsonl` (already available via `glia show`).
+- A status view (already via `glia status`).
+- A conflict resolution flow (already specced as `glia sync resolve` in §7.3).
 - A "tail" / live-update view of new sync activity (TBD — likely just polling `index.json`).
