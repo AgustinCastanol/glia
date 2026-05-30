@@ -17,7 +17,6 @@
 .antigravitycli/
 
 # Local doc drafts (kept out of repo until promoted)
-/docs/
 /README-LOCAL.md
 
 .glia/.lock
