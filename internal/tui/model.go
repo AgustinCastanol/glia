@@ -17,6 +17,8 @@ const (
 	tabConflicts            // Conflicts tab
 	tabStatus               // Status tab
 	tabHelp                 // Help tab
+
+	numTabs = 4 // total tab count, used for tab/shift+tab cycling
 )
 
 // overlayModel holds the sync output overlay shown while a subprocess runs.
@@ -121,10 +123,15 @@ func (m Model) Init() tea.Cmd {
 
 // Update satisfies tea.Model. Routing order:
 //  1. tea.WindowSizeMsg → store w/h, propagate to all sub-models.
-//  2. overlay modal (if active) gets all messages.
-//  3. syncDoneMsg → update overlay state.
-//  4. Global keys: q/ctrl+c quit; O/C/S/? switch tabs.
-//  5. Delegate to active sub-model.
+//  2. Async data messages → routed to their OWNING sub-model regardless of the
+//     active tab, so a section loaded at startup still receives its data even
+//     while another tab is focused.
+//  3. overlay modal (if active) gets all key messages.
+//  4. syncDoneMsg → update overlay state.
+//  5. Global keys: ctrl+c always quits; tab/shift+tab cycle; 1-4 (and legacy
+//     O/C/S/?) jump; q quits — but only when the active tab is not capturing
+//     free text, so we never steal characters from the filter input.
+//  6. Delegate remaining keys to the active sub-model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -133,8 +140,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.propagateSize()
 		return m, nil
 
+	// 2. Async data results must reach their owning sub-model even when a
+	// different tab is active. Routing these by activeTab (the old behavior)
+	// silently dropped Conflicts/Status startup loads onto the Observations
+	// model, which ignored them — so those tabs never populated.
+	case obsReloadMsg:
+		var cmd tea.Cmd
+		m.obs, cmd = m.obs.Update(msg)
+		return m, cmd
+
+	case conflictReloadMsg:
+		m.conflictCount = len(msg.entries)
+		var cmd tea.Cmd
+		m.conflict, cmd = m.conflict.Update(msg)
+		return m, cmd
+
+	case conflictResolvedMsg:
+		var cmd tea.Cmd
+		m.conflict, cmd = m.conflict.Update(msg)
+		return m, cmd
+
+	case statusDataMsg:
+		var cmd tea.Cmd
+		m.status, cmd = m.status.Update(msg)
+		return m, cmd
+
 	case tea.KeyMsg:
-		// 2. Overlay intercepts all keys when active.
+		// 3. Overlay intercepts all keys when active.
 		if m.overlay != nil {
 			if !m.overlay.running {
 				// Only enter dismisses the overlay.
@@ -151,25 +183,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// 4. Global key dispatch.
-		switch msg.String() {
-		case "q", "ctrl+c":
+		// ctrl+c always quits, even while typing in a filter.
+		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
-		case "O":
-			m.activeTab = tabObs
+		}
+
+		// tab/shift+tab cycle tabs. Safe even while filtering — text inputs
+		// do not consume the tab key as content.
+		switch msg.String() {
+		case "tab":
+			m.activeTab = (m.activeTab + 1) % numTabs
 			return m, nil
-		case "C":
-			m.activeTab = tabConflicts
-			return m, nil
-		case "S":
-			m.activeTab = tabStatus
-			return m, nil
-		case "?":
-			m.activeTab = tabHelp
+		case "shift+tab":
+			m.activeTab = (m.activeTab + numTabs - 1) % numTabs
 			return m, nil
 		}
 
-		// 5. Delegate to active sub-model.
+		// Single-key tab jumps and 'q' quit are suppressed while the active tab
+		// is capturing free text, otherwise they'd be stolen from the filter.
+		if !m.activeCapturingText() {
+			switch msg.String() {
+			case "q":
+				return m, tea.Quit
+			case "1", "O":
+				m.activeTab = tabObs
+				return m, nil
+			case "2", "C":
+				m.activeTab = tabConflicts
+				return m, nil
+			case "3", "S":
+				m.activeTab = tabStatus
+				return m, nil
+			case "4", "?":
+				m.activeTab = tabHelp
+				return m, nil
+			}
+		}
+
+		// 6. Delegate to active sub-model.
 		return m.delegateKey(msg)
 
 	case syncDoneMsg:
@@ -208,6 +259,19 @@ func (m *Model) propagateSize() {
 	m.conflict.SetSize(m.w, contentH)
 	m.status.SetSize(m.w, contentH)
 	m.help.SetSize(m.w, contentH)
+}
+
+// activeCapturingText reports whether the active sub-model is currently
+// consuming free-text keystrokes (e.g. the Observations filter input). When
+// true, the root model must not intercept single-key shortcuts, otherwise it
+// would steal characters the user is typing into that input.
+func (m Model) activeCapturingText() bool {
+	if m.activeTab == tabObs {
+		if o, ok := m.obs.(*obsModel); ok {
+			return o.filterFocused
+		}
+	}
+	return false
 }
 
 // delegateKey sends a key message to the active sub-model and re-assigns it.
@@ -270,10 +334,10 @@ func (m Model) renderTabBar() string {
 		id    tab
 		label string
 	}{
-		{tabObs, "[O]bservations"},
+		{tabObs, "1 Observations"},
 		{tabConflicts, m.conflictLabel()},
-		{tabStatus, "[S]tatus"},
-		{tabHelp, "[?]Help"},
+		{tabStatus, "3 Status"},
+		{tabHelp, "4 Help"},
 	}
 
 	parts := make([]string, len(tabs))
@@ -291,9 +355,9 @@ func (m Model) renderTabBar() string {
 func (m Model) conflictLabel() string {
 	if m.conflictCount > 0 {
 		badge := tabBadgeConflict.Render(fmt.Sprintf("(%d)", m.conflictCount))
-		return "[C]onflicts " + badge
+		return "2 Conflicts " + badge
 	}
-	return tabBadgeMuted.Render("[C]onflicts (0)")
+	return tabBadgeMuted.Render("2 Conflicts (0)")
 }
 
 // renderContent returns the active tab's content, bounded by available height.
@@ -328,7 +392,7 @@ func (m Model) renderContent() string {
 
 // renderStatusBar returns the bottom status row.
 func (m Model) renderStatusBar() string {
-	hint := "O:obs  C:conflicts  S:status  ?:help  q:quit"
+	hint := "tab/⇧tab move  1-4 jump  q quit"
 	if m.err != nil {
 		hint = errorText.Render(m.err.Error())
 	}

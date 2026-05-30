@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/agustincastanol/glia/internal/store"
 )
 
 // newSizedModel returns a Model sized to w×h for tests that need a rendered view.
@@ -57,6 +59,121 @@ func TestModel_TabSwitch_QuestionMark(t *testing.T) {
 	result := updated.(Model)
 	if result.activeTab != tabHelp {
 		t.Errorf("expected tabHelp after pressing ?, got %d", result.activeTab)
+	}
+}
+
+// --- Async data routing (Fix 1) ----------------------------------------------
+//
+// Regression tests for the bug where async load results were routed by the
+// active tab instead of to their owning sub-model. At startup activeTab=tabObs,
+// so Conflicts/Status load messages were delivered to the Observations model
+// and silently dropped, leaving those tabs blank until manually reloaded.
+
+func TestModel_StatusData_RoutedToStatusModel_WhileObsActive(t *testing.T) {
+	m := New(t.TempDir())
+	if m.activeTab != tabObs {
+		t.Fatalf("precondition: expected tabObs active, got %d", m.activeTab)
+	}
+
+	msg := statusDataMsg{status: &StatusJSON{ProviderHealth: map[string]string{"engram": "ok"}}}
+	updated, _ := m.Update(msg)
+	result := updated.(Model)
+
+	st := result.status.(*statusModel)
+	if st.status == nil {
+		t.Fatal("statusModel did not receive statusDataMsg while Obs tab was active")
+	}
+	if st.status.ProviderHealth["engram"] != "ok" {
+		t.Errorf("statusModel got wrong payload: %+v", st.status.ProviderHealth)
+	}
+}
+
+func TestModel_ConflictReload_RoutedAndUpdatesBadge_WhileObsActive(t *testing.T) {
+	m := New(t.TempDir())
+
+	entries := []store.ConflictEntry{
+		{CanonicalID: "a"},
+		{CanonicalID: "b"},
+		{CanonicalID: "c"},
+	}
+	updated, _ := m.Update(conflictReloadMsg{entries: entries})
+	result := updated.(Model)
+
+	if result.conflictCount != 3 {
+		t.Errorf("expected conflictCount=3 for badge, got %d", result.conflictCount)
+	}
+	cm := result.conflict.(*conflictModel)
+	if len(cm.entries) != 3 {
+		t.Errorf("conflictModel did not receive entries: got %d", len(cm.entries))
+	}
+}
+
+func TestModel_ObsReload_RoutedRegardlessOfActiveTab(t *testing.T) {
+	m := New(t.TempDir())
+	m.activeTab = tabStatus // focus a different tab
+
+	recs := []LazyRecord{{CanonicalID: "x", Title: "hello"}}
+	updated, _ := m.Update(obsReloadMsg{records: recs})
+	result := updated.(Model)
+
+	obs := result.obs.(*obsModel)
+	if len(obs.all) != 1 {
+		t.Errorf("obsModel did not receive obsReloadMsg while Status active: got %d", len(obs.all))
+	}
+}
+
+// --- Navigation (Fix 2) -------------------------------------------------------
+
+func TestModel_TabCycle_Tab(t *testing.T) {
+	m := New(t.TempDir())
+	for _, want := range []tab{tabConflicts, tabStatus, tabHelp, tabObs} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(Model)
+		if m.activeTab != want {
+			t.Fatalf("tab cycle: expected %d, got %d", want, m.activeTab)
+		}
+	}
+}
+
+func TestModel_TabCycle_ShiftTab(t *testing.T) {
+	m := New(t.TempDir())
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(Model)
+	if m.activeTab != tabHelp {
+		t.Errorf("shift+tab from Obs should wrap to Help, got %d", m.activeTab)
+	}
+}
+
+func TestModel_TabSwitch_Digits(t *testing.T) {
+	cases := map[string]tab{"1": tabObs, "2": tabConflicts, "3": tabStatus, "4": tabHelp}
+	for key, want := range cases {
+		m := New(t.TempDir())
+		m.activeTab = tabHelp // start away from target
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		result := updated.(Model)
+		if result.activeTab != want {
+			t.Errorf("digit %q: expected tab %d, got %d", key, want, result.activeTab)
+		}
+	}
+}
+
+// TestModel_ShortcutsSuppressedWhileFiltering is the regression for the hidden
+// collision: global single-key shortcuts must not be intercepted while the
+// Observations filter is focused, otherwise typed characters are stolen.
+func TestModel_ShortcutsSuppressedWhileFiltering(t *testing.T) {
+	m := newSizedModel(t, t.TempDir(), 80, 24)
+	obs := m.obs.(*obsModel)
+	obs.filterFocused = true
+	obs.filter.Focus()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	result := updated.(Model)
+
+	if result.activeTab != tabObs {
+		t.Errorf("pressing '2' while filtering should NOT switch tabs, got %d", result.activeTab)
+	}
+	if got := result.obs.(*obsModel).filter.Value(); got != "2" {
+		t.Errorf("filter should have received '2', got %q", got)
 	}
 }
 

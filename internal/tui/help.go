@@ -46,10 +46,8 @@ func (m *helpModel) View() string {
 	col := lipgloss.NewStyle().Width(38)
 
 	globalSec := helpSection("Global", [][2]string{
-		{"O", "Switch to Observations"},
-		{"C", "Switch to Conflicts"},
-		{"S", "Switch to Status"},
-		{"?", "Switch to Help"},
+		{"tab / ⇧tab", "Next / previous tab"},
+		{"1 / 2 / 3 / 4", "Jump to a tab"},
 		{"q / ctrl+c", "Quit"},
 	})
 
