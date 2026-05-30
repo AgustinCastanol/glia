@@ -1,5 +1,5 @@
  glia                                                                    q quit 
- [O]bservations   [C]onflicts (0)   [S]tatus   [?]Help 
+ 1 Observations   2 Conflicts (0)   3 Status   4 Help 
 > filter… (type: kind: provider:)       │ (no selection)                        
 No items.                               │                                       
                                         │                                       
@@ -21,4 +21,4 @@ No items.                               │
                                         │                                       
                                                                                 
   /filter f:kind t:type r:reload c:copy-id enter:detail                         
- O:obs  C:conflicts  S:status  ?:help  q:quit                                   
+ tab/⇧tab move  1-4 jump  q quit                                                
