@@ -21,14 +21,14 @@ claude-mem's design constrains us:
   - `GET /api/search` → 400 without params (search endpoint exists).
   - `GET /health` → `{ status, timestamp, activeSessions }`.
 
-The architectural decision for v1 (decided 2026-05-12) is **option (a): claude-mem is read-only from wrapper-mems**. The adapter reads claude-mem observations and pushes them into the canonical JSONL. It does NOT write canonical observations back into claude-mem. Bidirectional support is deferred to v1.1 once the HTTP API write surface is investigated.
+The architectural decision for v1 (decided 2026-05-12) is **option (a): claude-mem is read-only from glia**. The adapter reads claude-mem observations and pushes them into the canonical JSONL. It does NOT write canonical observations back into claude-mem. Bidirectional support is deferred to v1.1 once the HTTP API write surface is investigated.
 
 ## 2. Goals
 
 - Implement the `Adapter` interface from PRD-1 for claude-mem, in v1 **read-only** mode.
 - Document the field mapping claude-mem → canonical.
 - Specify graceful behavior when claude-mem's worker is not running.
-- Make the asymmetry (read-only) **visible and honest** to end users via `wrapper-mems status`.
+- Make the asymmetry (read-only) **visible and honest** to end users via `glia status`.
 
 ## 3. Non-Goals (v1)
 
@@ -48,7 +48,7 @@ The claude-mem adapter speaks HTTP to the running worker (`localhost:37701` by d
 The adapter's HTTP base URL is configurable:
 
 ```yaml
-# .wrapper-mems/config.yaml
+# .glia/config.yaml
 providers:
   claude-mem:
     base_url: http://localhost:37701
@@ -76,7 +76,7 @@ type ClaudeMemRecord struct {
 }
 ```
 
-**Action item before merging this PRD into code**: run wrapper-mems against a claude-mem instance with a real session; dump the first observation JSON; update §5 with the verified shape and §6 with the verified mapping.
+**Action item before merging this PRD into code**: run glia against a claude-mem instance with a real session; dump the first observation JSON; update §5 with the verified shape and §6 with the verified mapping.
 
 ## 6. Field mapping (claude-mem → canonical)
 
@@ -125,7 +125,7 @@ GET /api/observations?limit=100&offset=100
 
 until `hasMore: false`. Then filters in memory:
 
-1. `project_id` matches the wrapper-mems project (see §6).
+1. `project_id` matches the glia project (see §6).
 2. `updated_at >= since`.
 
 For projects with thousands of observations this is inefficient, but acceptable for v1. If `/api/observations` later supports server-side filters (`project=`, `since=`), the adapter switches to them transparently.
@@ -134,13 +134,13 @@ For projects with thousands of observations this is inefficient, but acceptable 
 
 1. **v1.1 — write support via HTTP API**: investigate whether the claude-mem HTTP server accepts `POST /api/observations` or equivalent. If yes, design bidirectional flow as PRD-2.1. If no, escalate to claude-mem upstream as a feature request before shipping bidirectional.
 2. **TO-CONFIRM** — actual JSON shape of an observation item. Required before merging the adapter implementation.
-3. **Project identity mapping**: claude-mem identifies projects by filesystem path; wrapper-mems uses its own project name (PRD-0 §9). Need a config field to map `claude-mem project path → wrapper-mems project name`.
-4. **Multiple wrapper-mems projects on one machine**: a single claude-mem worker holds observations for ALL of a developer's Claude Code projects. The adapter MUST filter strictly to avoid leaking observations from `project-A` into `project-B`'s canonical store.
+3. **Project identity mapping**: claude-mem identifies projects by filesystem path; glia uses its own project name (PRD-0 §9). Need a config field to map `claude-mem project path → glia project name`.
+4. **Multiple glia projects on one machine**: a single claude-mem worker holds observations for ALL of a developer's Claude Code projects. The adapter MUST filter strictly to avoid leaking observations from `project-A` into `project-B`'s canonical store.
 5. **Worker port discovery**: the worker writes its port to `~/.claude-mem/supervisor.json` and `worker.pid`. Adapter should read those instead of hardcoding `37701`, so it works after a port change.
 
 ## 10. Decision Required Before PRD-3
 
 None blocking, but PRD-3 (sync engine) needs to know:
 
-- claude-mem adapter is **read-only** in v1 → `wrapper-mems sync` from canonical does NOT call `claude-mem.WriteNative`.
-- claude-mem worker MUST be running for any sync involving claude-mem → `wrapper-mems sync` must check `Health()` and degrade gracefully (warn + skip, not fail) if the worker is down.
+- claude-mem adapter is **read-only** in v1 → `glia sync` from canonical does NOT call `claude-mem.WriteNative`.
+- claude-mem worker MUST be running for any sync involving claude-mem → `glia sync` must check `Health()` and degrade gracefully (warn + skip, not fail) if the worker is down.
