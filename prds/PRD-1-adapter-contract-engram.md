@@ -9,12 +9,12 @@
 
 ## 1. Context
 
-PRD-0 defined the neutral canonical memory format that lives in `.wrapper-mems/memory.jsonl`. PRD-1 defines:
+PRD-0 defined the neutral canonical memory format that lives in `.glia/memory.jsonl`. PRD-1 defines:
 
 1. The **Adapter contract** — the Go interface every provider plugin must implement.
 2. The **Engram adapter** — the reference implementation, since engram is the most structured of the v1 providers and serves as the validation target for the contract.
 
-The architecture decision from PRD-0 is preserved: engram and `wrapper-mems` coexist. `engram sync` keeps working standalone; `wrapper-mems` mirrors engram-origin content into the canonical JSONL so that claude-mem users can also see it.
+The architecture decision from PRD-0 is preserved: engram and `glia` coexist. `engram sync` keeps working standalone; `glia` mirrors engram-origin content into the canonical JSONL so that claude-mem users can also see it.
 
 ## 2. Goals
 
@@ -22,7 +22,7 @@ The architecture decision from PRD-0 is preserved: engram and `wrapper-mems` coe
 - Implement that interface for engram via the `engram` CLI (subprocess).
 - Specify the field-by-field mapping between engram observations and canonical records.
 - Specify round-trip guarantees: what is preserved, what is degraded, what is dropped (with reasons).
-- Specify mirror semantics: when wrapper-mems also drives `engram sync` and when it doesn't.
+- Specify mirror semantics: when glia also drives `engram sync` and when it doesn't.
 
 ## 3. Non-Goals (this PRD)
 
@@ -163,7 +163,7 @@ The adapter executes:
 | ListNative    | `engram search "" --project <P> --limit 1000 --scope project` (then filter by `updated_at >= since`) |
 | ReadNative    | Engram does not expose `read` by ID directly via CLI in v1.15. The adapter uses `engram search` with the title or sync_id as query, then matches. **See §9 open question 1.** |
 | WriteNative   | `engram save <title> <content> --type <T> --project <P> --scope project` (and `engram update` for revisions when available) |
-| Mirror to git | `engram sync --project <P>` — invoked at the end of a wrapper-mems push cycle, optional via flag. |
+| Mirror to git | `engram sync --project <P>` — invoked at the end of a glia push cycle, optional via flag. |
 
 ### 5.2 Engram native record (internal type)
 
@@ -191,7 +191,7 @@ type EngramRecord struct {
 | `type`       | `type`                  | 1:1, free string per PRD-0 §5.2.                                                |
 | `content`    | `content`               | 1:1. `content_format = "markdown"`.                                            |
 | `topic_key`  | `topic_key`             | 1:1.                                                                            |
-| `project`    | (matched against repo)  | If engram project ≠ repo's wrapper-mems project, the record is skipped.        |
+| `project`    | (matched against repo)  | If engram project ≠ repo's glia project, the record is skipped.        |
 | `scope`      | (filter)                | If `personal` → record excluded from canonical entirely.                       |
 | `session_id` | `origin.session_id`     | 1:1.                                                                            |
 | `created_at` | `created_at`            | 1:1.                                                                            |
@@ -231,9 +231,9 @@ For engram-origin observations entering canonical and coming back:
 
 ### 5.6 Mirror semantics with `engram sync`
 
-By default, `wrapper-mems sync` does NOT invoke `engram sync`. The two stay independent; the user can run either or both.
+By default, `glia sync` does NOT invoke `engram sync`. The two stay independent; the user can run either or both.
 
-When the user passes `--mirror-engram` (or the project config sets `mirror_engram: true`), `wrapper-mems sync push` additionally invokes `engram sync --project <P>` after writing the canonical JSONL, so that `.engram/` chunks are also up to date in the same commit. Symmetric for pull: `wrapper-mems sync pull --mirror-engram` runs `engram sync --import` after pulling the canonical JSONL.
+When the user passes `--mirror-engram` (or the project config sets `mirror_engram: true`), `glia sync push` additionally invokes `engram sync --project <P>` after writing the canonical JSONL, so that `.engram/` chunks are also up to date in the same commit. Symmetric for pull: `glia sync pull --mirror-engram` runs `engram sync --import` after pulling the canonical JSONL.
 
 This is opt-in to avoid surprising engram-only users who manage `.engram/` themselves.
 
@@ -269,7 +269,7 @@ This is best-effort, not auth. Trust model: anyone with repo write access can au
 
 1. **Reading a single engram observation by sync_id**: engram CLI v1.15 doesn't expose `read <id>` directly. The adapter has to use `engram search` and match. Two viable solutions: (a) request a CLI flag upstream (`engram get <sync_id>`), (b) fall back to HTTP API for this single operation. **Leaning (b)** — HTTP API as a focused fallback even when the rest stays on CLI.
 2. **Tags preservation**: engram CLI save command in v1.15 doesn't accept a tags array. Adapter loses tags on canonical → engram. Options: (a) accept the loss and document, (b) encode tags inline in content header, (c) wait for upstream support. **Leaning (a) with (c)** — document and request upstream.
-3. **session_id on import**: when wrapper-mems imports a foreign canonical record into a local engram, can `session_id` be preserved? Requires CLI flag or HTTP API write. Needs testing.
+3. **session_id on import**: when glia imports a foreign canonical record into a local engram, can `session_id` be preserved? Requires CLI flag or HTTP API write. Needs testing.
 4. **Engram relations** (`supersedes`, `conflicts_with`, `related`, `compatible`, `scoped`, `not_conflict`): not round-tripped in v1. They could be modeled in canonical as `kind: relation` records (already reserved in PRD-0). This is a significant chunk of work — proposed for v1.1, NOT v1.0. Confirm the deferral.
 5. **`updated_at` monotonicity**: does engram guarantee `updated_at` is monotonically increasing across updates? If not, `revision` tracking in canonical may misorder updates. Needs verification.
 

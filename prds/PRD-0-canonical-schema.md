@@ -8,7 +8,7 @@
 
 ## 1. Context
 
-`wrapper-mems` is a memory broker that lets a team share a single project memory across heterogeneous AI memory providers (engram, claude-mem, …). The architecture decision already taken is:
+`glia` is a memory broker that lets a team share a single project memory across heterogeneous AI memory providers (engram, claude-mem, …). The architecture decision already taken is:
 
 - **Source of truth lives in the project's git repo** (no remote backend in v1).
 - **The repo stores a neutral canonical format**, not any provider's native format.
@@ -38,23 +38,23 @@ PRD-0 defines that canonical format. Everything else (adapters, sync engine, TUI
 A single directory at the root of the project repo:
 
 ```
-.wrapper-mems/
+.glia/
   memory.jsonl       # canonical observations, one per line, append-only
   index.json         # canonical_id ↔ provider-native-id mappings (LOCAL, gitignored)
   schema.json        # schema version + provider registry for this repo
 ```
 
-**Coexistence with `.engram/`** (decided 2026-05-12, see also §10.6): engram already ships a `engram sync` mechanism that maintains a `.engram/` directory of compressed chunks in the repo. `wrapper-mems` does NOT replace it. Both directories coexist:
+**Coexistence with `.engram/`** (decided 2026-05-12, see also §10.6): engram already ships a `engram sync` mechanism that maintains a `.engram/` directory of compressed chunks in the repo. `glia` does NOT replace it. Both directories coexist:
 
 - `.engram/` is engram's native sync format, managed by `engram sync`. engram-only users may keep using it standalone.
-- `.wrapper-mems/memory.jsonl` is the neutral canonical store, managed by wrapper-mems.
-- The engram adapter mirrors content between the two so that a power user running `wrapper-mems sync` produces/consumes both.
+- `.glia/memory.jsonl` is the neutral canonical store, managed by glia.
+- The engram adapter mirrors content between the two so that a power user running `glia sync` produces/consumes both.
 
 This preserves the replaceability property (the JSONL outlives any provider) without forcing the existing engram sub-team off their current workflow.
 
 **Why JSONL, not many .md files:** one file, append-only, clean git diffs, no file explosion. Markdown-per-observation was rejected explicitly because it produces hundreds of files that swamp the repo.
 
-**Why a dot-dir:** keeps it out of the way and signals "tooling state" to humans. We pick `.wrapper-mems/` (not `.memory/`) to avoid colliding with anything else.
+**Why a dot-dir:** keeps it out of the way and signals "tooling state" to humans. We pick `.glia/` (not `.memory/`) to avoid colliding with anything else.
 
 ## 5. Canonical Observation Schema
 
@@ -170,7 +170,7 @@ These are NOT decided yet. Each will become its own PRD or be resolved before PR
 2. How do adapters handle a `topic_key` evolving across providers (engram has it natively; claude-mem does not)?
 3. Conflict resolution policy when two contributors append updates to the same `canonical_id` in parallel branches → both lines land after merge, but `index.json.latest_revision` will conflict in git. Spec a deterministic resolution (e.g. by `updated_at` then ULID tiebreak).
 4. ~~Should `index.json` be committed?~~ **Resolved 2026-05-12**: NOT committed. Each user's engram has its own local IDs, so `by_provider.engram` mappings are per-user. `index.json` is regenerated locally from `memory.jsonl` on demand. Goes in `.gitignore`.
-5. Privacy: should there be a way to mark an observation as `local_only` so it never enters the canonical store? (engram has `scope: personal` — wrapper-mems MUST filter those out at the adapter boundary regardless.)
+5. Privacy: should there be a way to mark an observation as `local_only` so it never enters the canonical store? (engram has `scope: personal` — glia MUST filter those out at the adapter boundary regardless.)
 6. ~~Relationship with `engram sync`?~~ **Resolved 2026-05-12**: coexistence (option 3). See §4.
 
 ## 11. Decision Required Before PRD-1
