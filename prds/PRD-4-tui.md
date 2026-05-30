@@ -33,14 +33,14 @@ PRDs 0-3 deliver a working CLI. PRD-4 puts a face on it: a terminal UI for brows
 - **Framework**: `github.com/charmbracelet/bubbletea` (Elm architecture for Go).
 - **Components**: `github.com/charmbracelet/bubbles` (list, table, viewport, textinput, spinner).
 - **Styling**: `github.com/charmbracelet/lipgloss`.
-- **Subprocess output**: pipe `wrapper-mems sync` stdout into a viewport so the user sees progress in-place.
+- **Subprocess output**: pipe `glia sync` stdout into a viewport so the user sees progress in-place.
 
-Entry point: `wrapper-mems tui` (alias: `wrapper-mems ui`).
+Entry point: `glia tui` (alias: `glia ui`).
 
 ## 5. Layout
 
 ```
-┌─ wrapper-mems ─ project: my-app ────────────────────────── q quit ─┐
+┌─ glia ─ project: my-app ────────────────────────── q quit ─┐
 │ [O]bservations  [C]onflicts (2)  [S]tatus  [?]Help                  │  ← tab bar
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
@@ -98,7 +98,7 @@ Two-pane layout: list on the left, detail on the right.
 
 **Filter syntax** (in the filter input): plain substring on title + content; prefix `type:bugfix` and `kind:session_summary` are recognized as structured filters; `provider:engram` filters by origin.
 
-**Source**: reads `.wrapper-mems/memory.jsonl` once on tab entry. No live refresh. Pressing `r` reloads.
+**Source**: reads `.glia/memory.jsonl` once on tab entry. No live refresh. Pressing `r` reloads.
 
 ### 6.2 [C]onflicts
 
@@ -142,7 +142,7 @@ Provider health, last sync, watermarks, config flags.
 ┌─ Status ───────────────────────────────────────────────────────────┐
 │ Project:   my-app                                                  │
 │ Repo:      /Users/agustin/proyects/my-app                          │
-│ Canonical: .wrapper-mems/memory.jsonl  (1247 lines, 314 KB)        │
+│ Canonical: .glia/memory.jsonl  (1247 lines, 314 KB)        │
 │ Schema:    v1                                                      │
 │                                                                    │
 │ Providers                                                          │
@@ -159,7 +159,7 @@ Provider health, last sync, watermarks, config flags.
 │ [s] sync now   [p] pull only   [P] push only   [m] toggle mirror   │
 ```
 
-Pressing `s` / `p` / `P` shells out to `wrapper-mems sync [...]` with output piped into a viewport overlay. Esc returns to the status view. After the run, watermarks and timestamps refresh.
+Pressing `s` / `p` / `P` shells out to `glia sync [...]` with output piped into a viewport overlay. Esc returns to the status view. After the run, watermarks and timestamps refresh.
 
 ### 6.4 [?] Help
 
@@ -170,7 +170,7 @@ Static cheatsheet listing the keybindings of the currently focused tab.
 When the user triggers a sync from any tab:
 
 ```
-┌─ wrapper-mems sync ────────────────────────────────────────────────┐
+┌─ glia sync ────────────────────────────────────────────────┐
 │ engram      ✓ pushed 3 records, pulled 1                           │
 │ claude-mem  ✓ pushed 12 records (read-only, skipping pull)         │
 │                                                                    │
@@ -180,11 +180,11 @@ When the user triggers a sync from any tab:
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-A spinner during the run, then the result lines. The TUI does NOT reimplement sync — it spawns the same `wrapper-mems sync` command the CLI exposes, so the two paths can never drift.
+A spinner during the run, then the result lines. The TUI does NOT reimplement sync — it spawns the same `glia sync` command the CLI exposes, so the two paths can never drift.
 
 ## 8. State and Lifecycle
 
-- The TUI reads `.wrapper-mems/memory.jsonl`, `.wrapper-mems/index.json`, and `.wrapper-mems/schema.json` on startup.
+- The TUI reads `.glia/memory.jsonl`, `.glia/index.json`, and `.glia/schema.json` on startup.
 - It writes NOTHING on its own. Every mutating action (sync, conflict resolution) goes through the CLI subprocess, which owns all writes.
 - Closing the TUI is `q` or `ctrl+c`. No confirmation prompts (nothing in-flight to lose; subprocess sync is foreground and blocks).
 
@@ -201,7 +201,7 @@ Target: open in under 100ms with a 100k-line `memory.jsonl`.
 1. **Markdown rendering** in the detail pane: use `github.com/charmbracelet/glamour`? Adds binary size but renders beautifully. Lean yes.
 2. **Color theme**: detect terminal background or ship a single neutral theme? v1: single neutral theme (low contrast on both light and dark), `--theme dark|light` flag for v1.1.
 3. **Conflict diff** (key `d` in §6.2): inline two-pane or shell out to `git diff --no-index`? Lean inline (consistent UX), use `github.com/sergi/go-diff` for the line-level diff.
-4. **Should `wrapper-mems` open the TUI when invoked with no args?** Two camps: (a) yes, friendliest, what new users expect; (b) no, CLI tools default to `--help`. Lean (a) — if the project is initialized, opening the TUI is more useful than printing help. If not initialized, print init instructions.
+4. **Should `glia` open the TUI when invoked with no args?** Two camps: (a) yes, friendliest, what new users expect; (b) no, CLI tools default to `--help`. Lean (a) — if the project is initialized, opening the TUI is more useful than printing help. If not initialized, print init instructions.
 
 ## 11. Decision Required Before PRD-5
 
