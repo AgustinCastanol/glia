@@ -2,6 +2,8 @@ package tui
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -172,6 +174,39 @@ func TestObsModel_ReloadCmd(t *testing.T) {
 	// loadRecords on empty dir returns nil — that is valid.
 	if len(reload.records) != 0 {
 		t.Errorf("want 0 records for empty dir, got %d", len(reload.records))
+	}
+}
+
+// TestObsModel_ReloadCmd_ReadsFromStoreSubdir is a regression test for the bug
+// where the Observations tab showed nothing because reloadCmd read memory.jsonl
+// from the project root instead of the .glia store subdirectory. The model
+// carries the project root (subprocess --dir calls need it); file reads must
+// resolve the .glia subdir themselves.
+func TestObsModel_ReloadCmd_ReadsFromStoreSubdir(t *testing.T) {
+	root := t.TempDir()
+	storeDir := filepath.Join(root, ".glia")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := makeRecord("zz1", 1, false)
+	writeJSONL(t, filepath.Join(storeDir, "memory.jsonl"), []any{rec})
+
+	m := newObsModel(root)
+	m.SetSize(80, 24)
+
+	msg := m.reloadCmd()()
+	reload, ok := msg.(obsReloadMsg)
+	if !ok {
+		t.Fatalf("want obsReloadMsg, got %T", msg)
+	}
+	if reload.err != nil {
+		t.Fatalf("unexpected error: %v", reload.err)
+	}
+	if len(reload.records) != 1 {
+		t.Fatalf("want 1 record loaded from .glia subdir, got %d", len(reload.records))
+	}
+	if reload.records[0].CanonicalID != "zz1" {
+		t.Errorf("want zz1, got %s", reload.records[0].CanonicalID)
 	}
 }
 

@@ -72,7 +72,7 @@ func (m *conflictModel) Init() tea.Cmd {
 }
 
 func (m *conflictModel) reloadCmd() tea.Cmd {
-	dir := m.dir
+	dir := storeSubdir(m.dir)
 	return func() tea.Msg {
 		snap, err := loadIndexFile(dir)
 		if err != nil {

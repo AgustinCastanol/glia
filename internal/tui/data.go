@@ -103,6 +103,13 @@ func (lr *LazyRecord) Decode() (store.CanonicalRecord, error) {
 // FilterValue exposes fields used by the filter function.
 func (lr *LazyRecord) FilterValue() string { return lr.Title }
 
+// storeSubdir resolves the .glia store directory under a project root. The TUI
+// sub-models carry the project root (their subprocess --dir calls require it),
+// but loadRecords/loadIndexFile read files inside the .glia subdirectory.
+func storeSubdir(projectDir string) string {
+	return filepath.Join(projectDir, ".glia")
+}
+
 // loadRecords reads memory.jsonl from storeDir, streaming line-by-line with a
 // 1 MB buffer. It returns LazyRecords — only index fields are decoded eagerly;
 // the full record body is decoded on demand via LazyRecord.Decode().
