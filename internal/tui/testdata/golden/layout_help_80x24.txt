@@ -1,19 +1,19 @@
  glia                                                                    q quit 
- [O]bservations   [C]onflicts (0)   [S]tatus   [?]Help 
+ 1 Observations   2 Conflicts (0)   3 Status   4 Help 
 Global                                Observations                          
-  O              Switch to              /              Focus filter input   
-Observations                            ↑ / k          Move selection up    
-  C              Switch to Conflicts    ↓ / j          Move selection down  
-  S              Switch to Status       enter          Full-screen detail   
-  ?              Switch to Help         esc            Clear filter / exit  
-  q / ctrl+c     Quit                 detail                                
-                                        c              Copy canonical_id    
-Conflicts                             (OSC52)                               
-  w              Accept winner (--keep  f              Cycle kind filter    
-1)                                      t              Cycle type filter    
-  l              Promote loser  (--     g / G          Top / bottom         
-keep 2)                                 r              Reload from disk     
-  s              Skip conflict                                              
+  tab / ⇧tab     Next / previous tab    /              Focus filter input   
+  1 / 2 / 3 / 4  Jump to a tab          ↑ / k          Move selection up    
+  q / ctrl+c     Quit                   ↓ / j          Move selection down  
+                                        enter          Full-screen detail   
+Conflicts                               esc            Clear filter / exit  
+  w              Accept winner (--keepdetail                                
+1)                                      c              Copy canonical_id    
+  l              Promote loser  (--   (OSC52)                               
+keep 2)                                 f              Cycle kind filter    
+  s              Skip conflict          t              Cycle type filter    
+                                        g / G          Top / bottom         
+                                        r              Reload from disk     
+                                                                            
                                       Status                                
                                         s              Run sync (full)      
                                         p              Run sync pull        
@@ -21,4 +21,4 @@ keep 2)                                 r              Reload from disk
                                         r              Refresh status data  
                                                                             
 
- O:obs  C:conflicts  S:status  ?:help  q:quit                                   
+ tab/⇧tab move  1-4 jump  q quit                                                
