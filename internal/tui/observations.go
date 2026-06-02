@@ -91,7 +91,7 @@ func (m *obsModel) Init() tea.Cmd {
 }
 
 func (m *obsModel) reloadCmd() tea.Cmd {
-	dir := m.dir
+	dir := storeSubdir(m.dir)
 	return func() tea.Msg {
 		recs, err := loadRecords(dir)
 		return obsReloadMsg{records: recs, err: err}
