@@ -13,9 +13,26 @@ type Config struct {
 	Providers     ProvidersConfig `yaml:"providers"`
 	Sync          SyncConfig      `yaml:"sync"`
 	Privacy       PrivacyConfig   `yaml:"privacy"`
+	// Sources holds read-only static file source configurations (PRD-11).
+	Sources SourcesConfig `yaml:"sources"`
 	// Identity is a user-config-only section. If present in a project config
 	// file it is silently ignored (enforced by the merge layer, not validated here).
 	Identity IdentityConfig `yaml:"identity"`
+}
+
+// SourcesConfig holds configuration for read-only static file sources (PRD-11).
+type SourcesConfig struct {
+	Openspec OpenspecSourceConfig `yaml:"openspec"`
+}
+
+// OpenspecSourceConfig holds openspec source options (PRD-11 §8).
+type OpenspecSourceConfig struct {
+	// Enabled controls whether the openspec source is active. Defaults to false;
+	// users who don't use SDD see no change in behaviour.
+	Enabled bool `yaml:"enabled"`
+	// Path is the path to the openspec root directory. It is resolved relative to
+	// the project root at wiring time. Defaults to "openspec".
+	Path string `yaml:"path"`
 }
 
 // ProvidersConfig holds configuration for each known provider.
@@ -117,6 +134,14 @@ func Default() *Config {
 		},
 		Privacy: PrivacyConfig{
 			ExcludedSessionIDs: []string{},
+		},
+		// Sources: openspec disabled by default (PRD-11 §8); users not using SDD
+		// see no change in behaviour. Path defaults to "openspec" (repo-relative).
+		Sources: SourcesConfig{
+			Openspec: OpenspecSourceConfig{
+				Enabled: false,
+				Path:    "openspec",
+			},
 		},
 	}
 }

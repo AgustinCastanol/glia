@@ -178,6 +178,17 @@ func mergeInto(dst *Config, src *Config, rawMap map[string]any, l layer) {
 		}
 	}
 
+	// Sources sub-map (PRD-11).
+	if rawSources, ok := rawMap["sources"]; ok {
+		if sm, ok := rawSources.(map[string]any); ok {
+			if rawOpenspec, ok := sm["openspec"]; ok {
+				if om, ok := rawOpenspec.(map[string]any); ok {
+					mergeOpenspec(&dst.Sources.Openspec, &src.Sources.Openspec, om)
+				}
+			}
+		}
+	}
+
 	// Identity: only honoured in the user layer.
 	if l == layerUser {
 		if rawIdentity, ok := rawMap["identity"]; ok {
@@ -256,6 +267,15 @@ func mergeSync(dst *SyncConfig, src *SyncConfig, m map[string]any) {
 	// Slice REPLACE rule (ADR-D2).
 	if _, ok := m["providers"]; ok {
 		dst.Providers = src.Providers
+	}
+}
+
+func mergeOpenspec(dst *OpenspecSourceConfig, src *OpenspecSourceConfig, m map[string]any) {
+	if _, ok := m["enabled"]; ok {
+		dst.Enabled = src.Enabled
+	}
+	if _, ok := m["path"]; ok {
+		dst.Path = src.Path
 	}
 }
 

@@ -475,3 +475,108 @@ providers:
 		t.Errorf("WriteEnabled: got false, want true (absent key must not override default)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// PRD-11 — sources.openspec config schema + merge tests
+// ---------------------------------------------------------------------------
+
+// TestDefault_OpenspecDisabledByDefault verifies that Default() returns openspec
+// disabled with path "openspec" (PRD-11 §8: absent/disabled by default).
+func TestDefault_OpenspecDisabledByDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.Sources.Openspec.Enabled {
+		t.Error("Sources.Openspec.Enabled: got true, want false (default is disabled)")
+	}
+	if cfg.Sources.Openspec.Path != "openspec" {
+		t.Errorf("Sources.Openspec.Path: got %q, want %q (default path)", cfg.Sources.Openspec.Path, "openspec")
+	}
+}
+
+// TestLoad_OpenspecEnabled verifies that sources.openspec.enabled: true in the
+// project config is parsed and merged correctly.
+func TestLoad_OpenspecEnabled(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: proj
+sources:
+  openspec:
+    enabled: true
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if !cfg.Sources.Openspec.Enabled {
+		t.Error("Sources.Openspec.Enabled: got false, want true")
+	}
+	// Default path preserved when not set.
+	if cfg.Sources.Openspec.Path != "openspec" {
+		t.Errorf("Sources.Openspec.Path: got %q, want %q", cfg.Sources.Openspec.Path, "openspec")
+	}
+}
+
+// TestLoad_OpenspecCustomPath verifies that sources.openspec.path is merged when
+// explicitly set in the project config.
+func TestLoad_OpenspecCustomPath(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: proj
+sources:
+  openspec:
+    enabled: true
+    path: sdd-artifacts
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Sources.Openspec.Path != "sdd-artifacts" {
+		t.Errorf("Sources.Openspec.Path: got %q, want %q", cfg.Sources.Openspec.Path, "sdd-artifacts")
+	}
+}
+
+// TestLoad_OpenspecAbsentKeyDoesNotOverride verifies that when sources is absent
+// from the project config, the default (disabled, path="openspec") is preserved.
+func TestLoad_OpenspecAbsentKeyDoesNotOverride(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "schema_version: 1\nproject: proj\n")
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Sources.Openspec.Enabled {
+		t.Error("Sources.Openspec.Enabled: got true, want false (absent sources key must not override default)")
+	}
+}
+
+// TestLoad_OpenspecUserOverridesProject verifies that the user config layer
+// overrides the project config for openspec settings.
+func TestLoad_OpenspecUserOverridesProject(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: proj
+sources:
+  openspec:
+    enabled: false
+`)
+	userPath := filepath.Join(t.TempDir(), "user.yaml")
+	writeUserConfig(t, userPath, `sources:
+  openspec:
+    enabled: true
+    path: custom-openspec
+`)
+
+	cfg, err := Load(dir, userPath)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if !cfg.Sources.Openspec.Enabled {
+		t.Error("Sources.Openspec.Enabled: got false, want true (user config overrides project)")
+	}
+	if cfg.Sources.Openspec.Path != "custom-openspec" {
+		t.Errorf("Sources.Openspec.Path: got %q, want %q (user config path)", cfg.Sources.Openspec.Path, "custom-openspec")
+	}
+}
