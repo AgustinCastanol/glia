@@ -495,7 +495,7 @@ func TestStatus_ResolvedEffectiveProjectFlowsToJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	adapters, err := buildAdapters(cfg, "")
+	adapters, err := buildAdapters(cfg, "", "")
 	if err != nil {
 		t.Fatalf("buildAdapters: %v", err)
 	}

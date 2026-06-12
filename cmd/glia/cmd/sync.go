@@ -189,7 +189,7 @@ func buildSyncEngine(s *store.Store, dir string) (*enginesync.Engine, error) {
 		opts.MirrorEngram = true
 	}
 
-	adapters, err := buildAdapters(loadedConfig, rootFlags.project)
+	adapters, err := buildAdapters(loadedConfig, rootFlags.project, dir)
 	if err != nil {
 		return nil, fmt.Errorf("build adapters: %w", err)
 	}
