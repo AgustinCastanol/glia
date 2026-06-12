@@ -91,13 +91,16 @@ Each line of `memory.jsonl` is one JSON object conforming to this schema:
 
 ### 5.1 `kind` values
 
-| kind                | Meaning                                                  | Primary provider source |
-|---------------------|----------------------------------------------------------|-------------------------|
-| `observation`       | Discrete typed fact (decision, bugfix, pattern, …)       | engram                  |
-| `session_summary`   | Narrative compressed summary of a coding session         | claude-mem              |
+| kind                | Meaning                                                              | Primary provider source |
+|---------------------|----------------------------------------------------------------------|-------------------------|
+| `observation`       | Discrete typed fact (decision, bugfix, pattern, …)                  | engram                  |
+| `session_summary`   | Narrative compressed summary of a coding session                     | claude-mem              |
 | `relation`          | Edge between two canonical observations (supersedes, conflicts_with, related) | engram (relations model) |
+| `spec_artifact`     | SDD planning artifact (proposal, spec, design, tasks)               | openspec                |
 
 This is the seam between engram's atomic model and claude-mem's session-narrative model. Adapters decide which kinds they consume; nothing forces a provider to surface kinds it can't represent natively.
+
+**§5.1 Amendment (PRD-11):** `spec_artifact` was added to support the openspec read-only source (PRD-11). The `type` field for `spec_artifact` records documents the artifact role (`proposal | spec | design | tasks`); this constraint is documented but not enforced by `validateRecord` (free-form `type` per §5.2).
 
 ### 5.2 `type` vocabulary
 

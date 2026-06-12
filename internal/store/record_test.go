@@ -93,6 +93,35 @@ func TestValidateRecord_TombstoneSupersedes_MustMatchCanonicalID(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrInvalidRecord))
 }
 
+// TestValidateRecord_SpecArtifactAccepted verifies that kind "spec_artifact"
+// with a valid content_format passes validateRecord (PRD-11 / PRD-0 §5.1 amendment).
+func TestValidateRecord_SpecArtifactAccepted(t *testing.T) {
+	r := validObservation()
+	r.Kind = "spec_artifact"
+	err := validateRecord(r)
+	assert.NoError(t, err)
+}
+
+// TestValidateRecord_UnknownKindRejected verifies that an unknown kind still
+// returns ErrInvalidRecord after adding spec_artifact.
+func TestValidateRecord_UnknownKindRejected(t *testing.T) {
+	r := validObservation()
+	r.Kind = "foo"
+	err := validateRecord(r)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrInvalidRecord))
+}
+
+// TestValidateRecord_ErrorMentionsSpecArtifact verifies that the error string
+// from an invalid kind explicitly lists "spec_artifact" in the kind set.
+func TestValidateRecord_ErrorMentionsSpecArtifact(t *testing.T) {
+	r := validObservation()
+	r.Kind = "bad_kind"
+	err := validateRecord(r)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec_artifact")
+}
+
 func TestDecodeLineSkipsUnknownSchemaVersion(t *testing.T) {
 	line := []byte(`{"canonical_id":"01HZZZZZZZZZZZZZZZZZZZAAAA","line_ulid":"01HZZZZZZZZZZZZZZZZZZZBBBB","schema_version":9999,"kind":"observation","revision":1,"supersedes":"","deleted":false,"title":"future","content":"x","content_format":"text/plain","origin":{"provider":"","provider_id":"","author":"","session_id":""},"created_at":"","updated_at":"","tags":[],"topic_key":"","type":""}`)
 	_, ok, err := decodeLine(line)
