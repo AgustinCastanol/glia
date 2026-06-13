@@ -102,8 +102,64 @@ func (e *Engine) activeProviders() []adapter.Adapter {
 	return result
 }
 
+// activeSources returns adapters registered in e.adapters whose
+// WriteCapability() == "read-only" AND whose name is NOT already covered by
+// activeProviders() (i.e. not in cfg.Providers). This identifies pure read-only
+// sources like the openspec adapter that the provider list does not enumerate.
+//
+// activeSources respects opts.ProviderFilter: if a filter is set, only sources
+// whose name matches the filter are returned (so --provider openspec works).
+//
+// Deterministic order: names are sorted before iteration.
+func (e *Engine) activeSources() []adapter.Adapter {
+	// Build the set of names already covered by cfg.Providers so we can exclude
+	// them. We use cfg.Providers directly (not activeProviders()) because
+	// activeProviders() may be further narrowed by ProviderFilter — we want the
+	// full configured-provider set for the exclusion guard.
+	providerSet := make(map[string]bool, len(e.cfg.Providers))
+	for _, name := range e.cfg.Providers {
+		providerSet[name] = true
+	}
+
+	// Collect all adapter names in deterministic order.
+	allNames := make([]string, 0, len(e.adapters))
+	for name := range e.adapters {
+		allNames = append(allNames, name)
+	}
+	sortStrings(allNames)
+
+	// Apply ProviderFilter (if set) to sources as well.
+	filter := make(map[string]bool, len(e.opts.ProviderFilter))
+	for _, p := range e.opts.ProviderFilter {
+		filter[p] = true
+	}
+
+	var result []adapter.Adapter
+	for _, name := range allNames {
+		// Skip adapters already handled by activeProviders().
+		if providerSet[name] {
+			continue
+		}
+		a := e.adapters[name]
+		// Only include genuinely read-only adapters (pure sources).
+		if a.WriteCapability() != "read-only" {
+			continue
+		}
+		// Apply ProviderFilter if set.
+		if len(filter) > 0 && !filter[name] {
+			continue
+		}
+		result = append(result, a)
+	}
+	return result
+}
+
 // Push iterates active providers, checks Health, and pushes native records
 // into the canonical store (§6.1 / REQ-SE-21..27).
+//
+// Read-only source adapters (those not in cfg.Providers but registered in the
+// adapters map with WriteCapability == "read-only") are also ingested in Push
+// via activeSources(). They are never iterated in Pull (PRD-11 §9).
 func (e *Engine) Push(ctx context.Context) (*RunReport, error) {
 	report := &RunReport{PerProvider: make(map[string]ProviderResult)}
 	providers := e.activeProviders()
@@ -132,6 +188,28 @@ func (e *Engine) Push(ctx context.Context) (*RunReport, error) {
 	// If ALL providers failed Health, surface as a hard-error report.
 	if allFailed && len(providers) > 0 {
 		return report, nil
+	}
+
+	// Ingest read-only sources (PRD-11 §9): sources are push-only; they are
+	// never exported in Pull. activeSources() excludes any name already in
+	// cfg.Providers to prevent double-counting.
+	for _, a := range e.activeSources() {
+		if err := a.Health(ctx); err != nil {
+			fmt.Fprintf(e.w, "source %s unavailable, skipping: %v\n", a.Name(), err)
+			report.HardErrors = append(report.HardErrors,
+				fmt.Errorf("source %s: %w", a.Name(), err))
+			continue
+		}
+
+		result, err := e.pushProvider(ctx, a)
+		if err != nil {
+			fmt.Fprintf(e.w, "WARN push source %s: %v\n", a.Name(), err)
+			report.HardErrors = append(report.HardErrors,
+				fmt.Errorf("push source %s: %w", a.Name(), err))
+			continue
+		}
+		report.PerProvider[a.Name()] = result
+		report.UpdatesSkipped += result.UpdatesSkipped
 	}
 
 	// Reflect current conflict count (REQ-SE-51).
