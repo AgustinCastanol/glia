@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -160,7 +160,7 @@ func (a *Adapter) ListNative(_ context.Context, _ string, since time.Time) ([]ad
 		fmt.Fprintf(os.Stderr, "openspec: skipped %d malformed/unreadable entries during walk\n", skippedMalformed)
 	}
 
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids, nil
 }
 
@@ -270,9 +270,8 @@ func extractTitle(content, relPath string) string {
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "# ") {
-			title := strings.TrimPrefix(line, "# ")
-			title = strings.TrimSpace(title)
+		if rest, ok := strings.CutPrefix(line, "# "); ok {
+			title := strings.TrimSpace(rest)
 			if title != "" {
 				return title
 			}
