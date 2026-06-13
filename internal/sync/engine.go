@@ -256,14 +256,39 @@ func (e *Engine) gitCommit() {
 
 // Status checks Health on each active provider and returns current conflict
 // state from the store (REQ-SE-23, REQ-SE-52).
+//
+// Adapters whose WriteCapability() == "read-only" are treated as sources
+// (PRD-11 §10): they appear in report.Sources rather than report.ProviderHealth
+// so that the status CLI can render them as a distinct block without meaningless
+// LAST_PUSHED columns.
 func (e *Engine) Status(ctx context.Context) (*StatusReport, error) {
 	providers := e.activeProviders()
 	report := &StatusReport{
-		ProviderHealth:          make(map[string]error, len(providers)),
-		ProviderWriteCapability: make(map[string]string, len(providers)),
+		ProviderHealth:          make(map[string]error, 0),
+		ProviderWriteCapability: make(map[string]string, 0),
 	}
 
 	for _, a := range providers {
+		if a.WriteCapability() == "read-only" {
+			// Source adapter: collect health and freshness separately.
+			ss := SourceStatus{
+				Name:            a.Name(),
+				WriteCapability: a.WriteCapability(),
+			}
+			healthErr := a.Health(ctx)
+			if healthErr != nil {
+				ss.Healthy = false
+				ss.HealthError = healthErr.Error()
+			} else {
+				ss.Healthy = true
+				// Best-effort: list artifacts to get count and newest mtime.
+				if ids, listErr := a.ListNative(ctx, "", zeroTime); listErr == nil {
+					ss.ArtifactCount = len(ids)
+				}
+			}
+			report.Sources = append(report.Sources, ss)
+			continue
+		}
 		report.ProviderHealth[a.Name()] = a.Health(ctx)
 		// REQ-CMW-09: surface write capability per provider for glia status display.
 		report.ProviderWriteCapability[a.Name()] = a.WriteCapability()
@@ -283,6 +308,9 @@ func (e *Engine) Status(ctx context.Context) (*StatusReport, error) {
 
 	return report, nil
 }
+
+// zeroTime is the zero value of time.Time used for unfiltered ListNative calls.
+var zeroTime = time.Time{}
 
 // Resolve resolves a conflict by selecting the duplicate at dupIndex (1-based)
 // as the canonical version (REQ-SE-37, REQ-SE-38, REQ-SE-39).

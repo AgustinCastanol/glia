@@ -39,6 +39,26 @@ type RunReport struct {
 	HardErrors []error
 }
 
+// SourceStatus carries per-source health and freshness for display in
+// glia status (PRD-11 §10). Sources are read-only ingest adapters distinct
+// from bidirectional providers; they render in a separate block.
+type SourceStatus struct {
+	// Name is the stable source identifier (e.g. "openspec").
+	Name string `json:"name"`
+	// WriteCapability is always "read-only" for sources.
+	WriteCapability string `json:"write_capability"`
+	// Healthy is true when Health() returned nil for this source.
+	Healthy bool `json:"healthy"`
+	// HealthError is the health error string when Healthy is false.
+	HealthError string `json:"health_error,omitempty"`
+	// ArtifactCount is the number of native artifacts available (from ListNative).
+	// Zero when Health() failed (listing was skipped).
+	ArtifactCount int `json:"artifact_count"`
+	// NewestArtifact is the RFC3339 timestamp of the most recently modified
+	// artifact file, or "" when none exist / health failed.
+	NewestArtifact string `json:"newest_artifact,omitempty"`
+}
+
 // StatusReport is returned by Engine.Status.
 type StatusReport struct {
 	// ProviderHealth maps provider name to the error returned by Health().
@@ -51,6 +71,11 @@ type StatusReport struct {
 
 	// Conflicts is the current conflict list from the store.
 	Conflicts []ConflictSummary
+
+	// Sources holds per-source health and freshness entries (PRD-11 §10).
+	// Populated only for adapters whose WriteCapability() == "read-only" and
+	// whose Name() is NOT already in ProviderHealth (i.e. pure sources).
+	Sources []SourceStatus
 }
 
 // ConflictSummary is a flattened view of a store.ConflictEntry for display.

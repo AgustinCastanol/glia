@@ -47,6 +47,10 @@ type statusJSON struct {
 	LineCount     int   `json:"line_count"`
 	FileSizeBytes int64 `json:"file_size_bytes"`
 	SchemaVersion int   `json:"schema_version"`
+
+	// Sources lists read-only static file sources and their health/freshness
+	// (PRD-11 §10). Always a JSON array (never null).
+	Sources []enginesync.SourceStatus `json:"sources"`
 }
 
 var statusCmd = &cobra.Command{
@@ -166,6 +170,9 @@ func runStatus(cmd *cobra.Command, _ []string) {
 		printConflictsTable(w, report)
 	}
 
+	// Print sources block when any read-only sources are configured (PRD-11 §10).
+	printSourcesTable(w, report)
+
 	if anyDegraded {
 		os.Exit(1)
 	}
@@ -252,6 +259,12 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport, effectiveP
 		conflicts = []enginesync.ConflictSummary{}
 	}
 
+	// Sources: always a non-nil slice so JSON renders [] not null (PRD-11 §10).
+	sources := report.Sources
+	if sources == nil {
+		sources = []enginesync.SourceStatus{}
+	}
+
 	return statusJSON{
 		ProviderHealth:   health,
 		WriteCapability:  writeCap,
@@ -261,7 +274,30 @@ func buildStatusJSON(s *store.Store, report *enginesync.StatusReport, effectiveP
 		LineCount:        st.LineCount,
 		FileSizeBytes:    st.FileSizeBytes,
 		SchemaVersion:    st.SchemaVersion,
+		Sources:          sources,
 	}, nil
+}
+
+// printSourcesTable renders the sources block as a tab-separated table (PRD-11 §10).
+// It is a no-op when report.Sources is empty so the sources block is invisible
+// when openspec is disabled. Sources are intentionally separate from the providers
+// table: they have no LAST_PUSHED / LAST_PULLED watermarks.
+func printSourcesTable(w io.Writer, report *enginesync.StatusReport) {
+	if len(report.Sources) == 0 {
+		return
+	}
+	tw := newTabWriter(w)
+	fmt.Fprintln(tw, "SOURCE\tSTATUS\tWRITE_CAPABILITY\tARTIFACTS\tNEWEST")
+	for _, src := range report.Sources {
+		status := "healthy"
+		if !src.Healthy {
+			status = "degraded: " + src.HealthError
+		}
+		newest := dashIfEmpty(src.NewestArtifact)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			src.Name, status, src.WriteCapability, src.ArtifactCount, newest)
+	}
+	tw.Flush()
 }
 
 // runStatusJSON emits the machine-readable JSON status object and exits with
