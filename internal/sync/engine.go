@@ -348,28 +348,21 @@ func (e *Engine) Status(ctx context.Context) (*StatusReport, error) {
 
 	for _, a := range providers {
 		if a.WriteCapability() == "read-only" {
-			// Source adapter: collect health and freshness separately.
-			ss := SourceStatus{
-				Name:            a.Name(),
-				WriteCapability: a.WriteCapability(),
-			}
-			healthErr := a.Health(ctx)
-			if healthErr != nil {
-				ss.Healthy = false
-				ss.HealthError = healthErr.Error()
-			} else {
-				ss.Healthy = true
-				// Best-effort: list artifacts to get count and newest mtime.
-				if ids, listErr := a.ListNative(ctx, "", zeroTime); listErr == nil {
-					ss.ArtifactCount = len(ids)
-				}
-			}
-			report.Sources = append(report.Sources, ss)
+			// A read-only adapter explicitly listed among providers is still a
+			// source: report it in the sources block (PRD-11 §10).
+			report.Sources = append(report.Sources, e.sourceStatus(ctx, a))
 			continue
 		}
 		report.ProviderHealth[a.Name()] = a.Health(ctx)
 		// REQ-CMW-09: surface write capability per provider for glia status display.
 		report.ProviderWriteCapability[a.Name()] = a.WriteCapability()
+	}
+
+	// Read-only sources (e.g. openspec) are not enumerated in cfg.Providers, so
+	// activeProviders() does not surface them. Collect them explicitly so they
+	// appear in the status sources block (PRD-11 §10).
+	for _, a := range e.activeSources() {
+		report.Sources = append(report.Sources, e.sourceStatus(ctx, a))
 	}
 
 	// Expose current conflicts as summaries.
@@ -385,6 +378,26 @@ func (e *Engine) Status(ctx context.Context) (*StatusReport, error) {
 	}
 
 	return report, nil
+}
+
+// sourceStatus builds a SourceStatus for a read-only source adapter, probing
+// Health and (when healthy) a best-effort artifact count (PRD-11 §10).
+func (e *Engine) sourceStatus(ctx context.Context, a adapter.Adapter) SourceStatus {
+	ss := SourceStatus{
+		Name:            a.Name(),
+		WriteCapability: a.WriteCapability(),
+	}
+	if healthErr := a.Health(ctx); healthErr != nil {
+		ss.Healthy = false
+		ss.HealthError = healthErr.Error()
+		return ss
+	}
+	ss.Healthy = true
+	// Best-effort: list artifacts to get count and newest mtime.
+	if ids, listErr := a.ListNative(ctx, "", zeroTime); listErr == nil {
+		ss.ArtifactCount = len(ids)
+	}
+	return ss
 }
 
 // zeroTime is the zero value of time.Time used for unfiltered ListNative calls.
