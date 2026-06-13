@@ -65,14 +65,27 @@ type Transport interface {
 
 // supervisorConfig is a minimal subset of ~/.claude-mem/supervisor.json.
 // Additional fields are silently ignored (tolerant parse per ADR-3).
+//
+// NOTE (verified 2026-06-13 against claude-mem v13.2.0): supervisor.json does
+// NOT publish a port. Its real shape is
+//   {"processes": {"worker": {pid, type, startedAt}, "chroma-mcp": {...}, ...}}
+// with no port field anywhere — and no other file under ~/.claude-mem carries
+// one either. The worker actually listens on :37701 (the resolveBaseURL
+// fallback). The Port field below is kept as forward-compatible scaffolding: if
+// a future claude-mem release publishes its port here, discovery begins working
+// with no code change. Until then readSupervisorPort always returns 0.
 type supervisorConfig struct {
-	Port int `json:"port,omitempty"` // PROVISIONAL: supervisor.json schema unverified
+	Port int `json:"port,omitempty"` // absent in claude-mem v13.2.0; see note above
 }
 
-// readSupervisorPort reads ~/.claude-mem/supervisor.json and returns the port
-// field. Returns 0 on ANY error (missing file, bad JSON, port==0).
-// Never returns an error; never panics. Construction must not fail on this
+// readSupervisorPort reads ~/.claude-mem/supervisor.json and returns its port
+// field. Returns 0 on ANY error (missing file, bad JSON, no port field).
+// Never returns an error; never panics — construction must not fail on this
 // peripheral discovery file (ADR-3).
+//
+// As of claude-mem v13.2.0 supervisor.json carries no port (see supervisorConfig),
+// so this returns 0 in practice and resolveBaseURL falls through to the :37701
+// default. Retained as best-effort discovery for forward compatibility.
 func readSupervisorPort() int {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -93,7 +106,8 @@ func readSupervisorPort() int {
 // priority order mandated by REQ-CM-05 and ADR-3:
 //  1. explicit arg (non-empty) — wins immediately
 //  2. port from ~/.claude-mem/supervisor.json → http://localhost:<port>
-//  3. hardcoded fallback: http://localhost:37701
+//     (best-effort; a no-op on claude-mem v13.2.0, which publishes no port)
+//  3. hardcoded fallback: http://localhost:37701 (the worker's actual port today)
 //
 // The resolved URL is fixed at construction time; never re-resolved at call time.
 func resolveBaseURL(explicit string) string {
