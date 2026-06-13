@@ -57,6 +57,7 @@ var validKinds = map[string]bool{
 	"observation":     true,
 	"session_summary": true,
 	"relation":        true,
+	"spec_artifact":   true,
 }
 
 // validateRecord enforces the schema invariants for a CanonicalRecord.
@@ -64,7 +65,7 @@ var validKinds = map[string]bool{
 // revision, and supersedes before calling.
 func validateRecord(r CanonicalRecord) error {
 	if !validKinds[r.Kind] {
-		return fmt.Errorf("validate: kind %q not in {observation,session_summary,relation}: %w", r.Kind, ErrInvalidRecord)
+		return fmt.Errorf("validate: kind %q not in {observation,session_summary,relation,spec_artifact}: %w", r.Kind, ErrInvalidRecord)
 	}
 	if !r.Deleted && r.ContentFormat == "" {
 		return fmt.Errorf("validate: content_format required for non-tombstone: %w", ErrInvalidRecord)

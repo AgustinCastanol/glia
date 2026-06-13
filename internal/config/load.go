@@ -178,6 +178,17 @@ func mergeInto(dst *Config, src *Config, rawMap map[string]any, l layer) {
 		}
 	}
 
+	// Sources sub-map (PRD-11).
+	if rawSources, ok := rawMap["sources"]; ok {
+		if sm, ok := rawSources.(map[string]any); ok {
+			if rawOpenspec, ok := sm["openspec"]; ok {
+				if om, ok := rawOpenspec.(map[string]any); ok {
+					mergeOpenspec(&dst.Sources.Openspec, &src.Sources.Openspec, om)
+				}
+			}
+		}
+	}
+
 	// Identity: only honoured in the user layer.
 	if l == layerUser {
 		if rawIdentity, ok := rawMap["identity"]; ok {
@@ -259,6 +270,15 @@ func mergeSync(dst *SyncConfig, src *SyncConfig, m map[string]any) {
 	}
 }
 
+func mergeOpenspec(dst *OpenspecSourceConfig, src *OpenspecSourceConfig, m map[string]any) {
+	if _, ok := m["enabled"]; ok {
+		dst.Enabled = src.Enabled
+	}
+	if _, ok := m["path"]; ok {
+		dst.Path = src.Path
+	}
+}
+
 // expandPaths expands "~/" prefixes in known path fields.
 func expandPaths(c *Config) {
 	home, err := os.UserHomeDir()
@@ -272,6 +292,7 @@ func expandPaths(c *Config) {
 	for k, v := range c.Providers.ClaudeMem.ProjectPathMapping {
 		c.Providers.ClaudeMem.ProjectPathMapping[k] = expandHome(v, home)
 	}
+	c.Sources.Openspec.Path = expandHome(c.Sources.Openspec.Path, home)
 }
 
 // expandHome expands a leading "~/" or bare "~" using home.

@@ -15,7 +15,7 @@ func TestBuildAdapters_EnabledOnlyReturned(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.ClaudeMem.Enabled = false
 
-	adapters, err := buildAdapters(cfg, "")
+	adapters, err := buildAdapters(cfg, "", "")
 	if err != nil {
 		t.Fatalf("buildAdapters: unexpected error: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestBuildAdapters_BothEnabled(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.ClaudeMem.Enabled = true
 
-	adapters, err := buildAdapters(cfg, "")
+	adapters, err := buildAdapters(cfg, "", "")
 	if err != nil {
 		t.Fatalf("buildAdapters: unexpected error: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestBuildAdapters_NoneEnabled(t *testing.T) {
 	cfg.Providers.Engram.Enabled = false
 	cfg.Providers.ClaudeMem.Enabled = false
 
-	adapters, err := buildAdapters(cfg, "")
+	adapters, err := buildAdapters(cfg, "", "")
 	if err != nil {
 		t.Fatalf("buildAdapters: unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestBuildAdapters_UnknownEngramTransportReturnsError(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.Engram.Transport = "grpc" // unknown
 
-	_, err := buildAdapters(cfg, "")
+	_, err := buildAdapters(cfg, "", "")
 	if err == nil {
 		t.Fatal("expected error for unknown engram transport, got nil")
 	}
@@ -86,7 +86,7 @@ func TestBuildAdapters_EngineAdapterNamesMatch(t *testing.T) {
 	cfg.Providers.Engram.Enabled = true
 	cfg.Providers.ClaudeMem.Enabled = true
 
-	adapters, err := buildAdapters(cfg, "")
+	adapters, err := buildAdapters(cfg, "", "")
 	if err != nil {
 		t.Fatalf("buildAdapters: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestBuildAdapters_PerProviderProjectPropagated(t *testing.T) {
 		cfg.Providers.Engram.Project = "eng-specific"
 		cfg.Providers.ClaudeMem.Enabled = false
 
-		adapters, err := buildAdapters(cfg, "")
+		adapters, err := buildAdapters(cfg, "", "")
 		if err != nil {
 			t.Fatalf("buildAdapters: %v", err)
 		}
@@ -137,7 +137,7 @@ func TestBuildAdapters_PerProviderProjectPropagated(t *testing.T) {
 		cfg.Providers.Engram.Project = "" // no override
 		cfg.Providers.ClaudeMem.Enabled = false
 
-		adapters, err := buildAdapters(cfg, "")
+		adapters, err := buildAdapters(cfg, "", "")
 		if err != nil {
 			t.Fatalf("buildAdapters: %v", err)
 		}
@@ -162,7 +162,7 @@ func TestBuildAdapters_PerProviderProjectPropagated(t *testing.T) {
 		cfg.Providers.ClaudeMem.Enabled = true
 		cfg.Providers.ClaudeMem.Project = "cm-specific"
 
-		adapters, err := buildAdapters(cfg, "")
+		adapters, err := buildAdapters(cfg, "", "")
 		if err != nil {
 			t.Fatalf("buildAdapters: %v", err)
 		}
@@ -235,6 +235,71 @@ func TestResolveEngineProject(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// PRD-11 — openspec source wiring tests
+// ---------------------------------------------------------------------------
+
+// TestBuildAdapters_OpenspecEnabled verifies that when sources.openspec.enabled
+// is true, the returned map contains an "openspec" adapter with Name()="openspec".
+func TestBuildAdapters_OpenspecEnabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Project = "test-project"
+	cfg.Providers.Engram.Enabled = false
+	cfg.Providers.ClaudeMem.Enabled = false
+	cfg.Sources.Openspec.Enabled = true
+	cfg.Sources.Openspec.Path = "openspec"
+
+	adapters, err := buildAdapters(cfg, "", "")
+	if err != nil {
+		t.Fatalf("buildAdapters: unexpected error: %v", err)
+	}
+	a, ok := adapters["openspec"]
+	if !ok {
+		t.Fatal("expected openspec adapter in map when sources.openspec.enabled=true")
+	}
+	if a.Name() != "openspec" {
+		t.Errorf("adapter Name()=%q, want %q", a.Name(), "openspec")
+	}
+}
+
+// TestBuildAdapters_OpenspecDisabled verifies that when sources.openspec.enabled
+// is false (default), the "openspec" key is absent from the returned map.
+func TestBuildAdapters_OpenspecDisabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Project = "test-project"
+	cfg.Sources.Openspec.Enabled = false
+
+	adapters, err := buildAdapters(cfg, "", "")
+	if err != nil {
+		t.Fatalf("buildAdapters: unexpected error: %v", err)
+	}
+	if _, ok := adapters["openspec"]; ok {
+		t.Error("expected openspec adapter absent when sources.openspec.enabled=false")
+	}
+}
+
+// TestBuildAdapters_OpenspecWriteCapability verifies the openspec adapter
+// reports "read-only" write capability, confirming it cannot write records.
+func TestBuildAdapters_OpenspecWriteCapability(t *testing.T) {
+	cfg := config.Default()
+	cfg.Project = "test-project"
+	cfg.Providers.Engram.Enabled = false
+	cfg.Providers.ClaudeMem.Enabled = false
+	cfg.Sources.Openspec.Enabled = true
+
+	adapters, err := buildAdapters(cfg, "", "")
+	if err != nil {
+		t.Fatalf("buildAdapters: %v", err)
+	}
+	a, ok := adapters["openspec"]
+	if !ok {
+		t.Fatal("expected openspec adapter")
+	}
+	if got := a.WriteCapability(); got != "read-only" {
+		t.Errorf("openspec WriteCapability()=%q, want %q", got, "read-only")
+	}
+}
+
 // TestBuildAdapters_WriteEnabledPropagated verifies that config.WriteEnabled is
 // correctly propagated from the *bool config field into the claudemem.Config
 // bool field (REQ-CMW-04 wiring fix). Before the fix, WriteEnabled was silently
@@ -247,7 +312,7 @@ func TestBuildAdapters_WriteEnabledPropagated(t *testing.T) {
 		writeEnabled := true
 		cfg.Providers.ClaudeMem.WriteEnabled = &writeEnabled
 
-		adapters, err := buildAdapters(cfg, "")
+		adapters, err := buildAdapters(cfg, "", "")
 		if err != nil {
 			t.Fatalf("buildAdapters: %v", err)
 		}
@@ -269,7 +334,7 @@ func TestBuildAdapters_WriteEnabledPropagated(t *testing.T) {
 		writeEnabled := false
 		cfg.Providers.ClaudeMem.WriteEnabled = &writeEnabled
 
-		adapters, err := buildAdapters(cfg, "")
+		adapters, err := buildAdapters(cfg, "", "")
 		if err != nil {
 			t.Fatalf("buildAdapters: %v", err)
 		}

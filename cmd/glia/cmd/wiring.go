@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/agustincastanol/glia/internal/adapter"
 	"github.com/agustincastanol/glia/internal/adapter/claudemem"
 	"github.com/agustincastanol/glia/internal/adapter/engram"
 	"github.com/agustincastanol/glia/internal/config"
 	"github.com/agustincastanol/glia/internal/identity"
+	"github.com/agustincastanol/glia/internal/source/openspec"
 )
 
 // buildAdapters constructs configured adapters from a loaded *config.Config.
@@ -19,12 +21,16 @@ import (
 // per-provider and global project overrides honour PRD-6 precedence:
 //   CLI flag > providers.<x>.project > Config.Project
 //
+// projectDir is the absolute path to the project root directory. It is used
+// to resolve repo-relative source paths (e.g. sources.openspec.path).
+//
 // On any construction failure (e.g. unknown transport type) the error is
 // returned immediately so callers (status, sync, doctor) can surface it.
 //
 // The returned map uses canonical provider names as keys ("engram",
-// "claude-mem"). A nil map (all providers disabled) is valid and not an error.
-func buildAdapters(cfg *config.Config, cliProject string) (map[string]adapter.Adapter, error) {
+// "claude-mem", "openspec"). A nil map (all providers disabled) is valid
+// and not an error.
+func buildAdapters(cfg *config.Config, cliProject string, projectDir string) (map[string]adapter.Adapter, error) {
 	author := identity.Resolve(cfg.Identity.Author)
 	out := make(map[string]adapter.Adapter)
 
@@ -65,6 +71,16 @@ func buildAdapters(cfg *config.Config, cliProject string) (map[string]adapter.Ad
 			WriteEnabled:       writeEnabled,
 			Project:            config.ResolveProject(cliProject, cfg.Providers.ClaudeMem.Project, cfg.Project),
 		}, tr)
+	}
+
+	// openspec read-only source (PRD-11). Registered only when enabled; absent
+	// when disabled so the sync engine and status command are unaffected.
+	if cfg.Sources.Openspec.Enabled {
+		openspecDir := cfg.Sources.Openspec.Path
+		if !filepath.IsAbs(openspecDir) && projectDir != "" {
+			openspecDir = filepath.Join(projectDir, openspecDir)
+		}
+		out["openspec"] = openspec.New(openspec.Config{Dir: openspecDir})
 	}
 
 	return out, nil
