@@ -222,6 +222,11 @@ func (a *Adapter) ToCanonical(native adapter.NativeRecord, idmap adapter.IDMap) 
 
 	ts := f.ModTime.Format(time.RFC3339)
 
+	tags := []string{}
+	if isArchived(f.RelPath) {
+		tags = []string{"archived"}
+	}
+
 	return store.CanonicalRecord{
 		CanonicalID:   string(canonicalID),
 		Kind:          "spec_artifact",
@@ -233,7 +238,7 @@ func (a *Adapter) ToCanonical(native adapter.NativeRecord, idmap adapter.IDMap) 
 		TopicKey:      topicKey(f.RelPath),
 		CreatedAt:     ts,
 		UpdatedAt:     ts,
-		Tags:          []string{},
+		Tags:          tags,
 		Origin: store.Origin{
 			Provider:   "openspec",
 			ProviderID: f.RelPath,
@@ -297,15 +302,40 @@ func fallbackTitle(relPath string) string {
 	}
 }
 
+// isArchived reports whether relPath is under changes/archive/<change>/.
+// Archived changes are relocated by openspec to this subtree (PRD-11 §9.5).
+func isArchived(relPath string) bool {
+	parts := strings.Split(relPath, "/")
+	// Pattern: changes/archive/<change>/...
+	return len(parts) >= 4 && parts[0] == "changes" && parts[1] == "archive"
+}
+
+// changeAndRest extracts (change, restParts) from a changes/... path.
+// For archived paths (changes/archive/<change>/...) it skips the "archive" segment.
+// For active paths (changes/<change>/...) it returns directly.
+// Returns ("", nil) if the path does not match a changes/... pattern.
+func changeAndRest(parts []string) (string, []string) {
+	if len(parts) < 3 || parts[0] != "changes" {
+		return "", nil
+	}
+	if parts[1] == "archive" && len(parts) >= 4 {
+		// changes/archive/<change>/<rest...>
+		return parts[2], parts[3:]
+	}
+	// changes/<change>/<rest...>
+	return parts[1], parts[2:]
+}
+
 // artifactType maps a relative artifact path to the canonical type string
 // (proposal | spec | design | tasks).
 //
 // Rules (PRD-11 §5):
-//   - changes/<c>/proposal.md → "proposal"
-//   - changes/<c>/design.md   → "design"
-//   - changes/<c>/tasks.md    → "tasks"
-//   - changes/<c>/specs/**    → "spec"
-//   - specs/**                → "spec"
+//   - changes/<c>/proposal.md              → "proposal"
+//   - changes/<c>/design.md                → "design"
+//   - changes/<c>/tasks.md                 → "tasks"
+//   - changes/<c>/specs/**                 → "spec"
+//   - changes/archive/<c>/<same rules>     → same types (archived segment skipped)
+//   - specs/**                             → "spec"
 func artifactType(relPath string) string {
 	parts := strings.Split(relPath, "/")
 
@@ -314,11 +344,15 @@ func artifactType(relPath string) string {
 	}
 
 	if len(parts) >= 3 && parts[0] == "changes" {
-		// changes/<c>/specs/... → "spec"
-		if len(parts) >= 4 && parts[2] == "specs" {
+		_, rest := changeAndRest(parts)
+		if rest == nil {
 			return "spec"
 		}
-		base := strings.TrimSuffix(parts[len(parts)-1], ".md")
+		// rest[0] may be "specs/..." subtree
+		if len(rest) >= 2 && rest[0] == "specs" {
+			return "spec"
+		}
+		base := strings.TrimSuffix(rest[len(rest)-1], ".md")
 		switch base {
 		case "proposal":
 			return "proposal"
@@ -337,10 +371,12 @@ func artifactType(relPath string) string {
 // topicKey derives the canonical topic_key from a relative path (PRD-11 §5).
 //
 // Rules:
-//   - changes/<c>/<artifact>.md  → "sdd/<c>/<artifact>"
-//   - changes/<c>/specs/<f>.md   → "sdd/<c>/<f>"
-//   - specs/<domain>/spec.md     → "spec/<domain>"
-//   - specs/<domain>/<f>.md      → "spec/<domain>"
+//   - changes/<c>/<artifact>.md              → "sdd/<c>/<artifact>"
+//   - changes/<c>/specs/<f>.md               → "sdd/<c>/<f>"
+//   - changes/archive/<c>/<artifact>.md      → "sdd/<c>/<artifact>"  (archive segment skipped)
+//   - changes/archive/<c>/specs/<f>.md       → "sdd/<c>/<f>"         (archive segment skipped)
+//   - specs/<domain>/spec.md                 → "spec/<domain>"
+//   - specs/<domain>/<f>.md                  → "spec/<domain>"
 func topicKey(relPath string) string {
 	parts := strings.Split(relPath, "/")
 
@@ -350,13 +386,16 @@ func topicKey(relPath string) string {
 	}
 
 	if len(parts) >= 3 && parts[0] == "changes" {
-		change := parts[1]
-		// changes/<c>/specs/... → use the file base as artifact key
-		if len(parts) >= 4 && parts[2] == "specs" {
-			artifact := strings.TrimSuffix(parts[len(parts)-1], ".md")
+		change, rest := changeAndRest(parts)
+		if change == "" || rest == nil {
+			return strings.TrimSuffix(filepath.Base(relPath), ".md")
+		}
+		// rest[0] == "specs" subtree → use file base as artifact key
+		if len(rest) >= 2 && rest[0] == "specs" {
+			artifact := strings.TrimSuffix(rest[len(rest)-1], ".md")
 			return "sdd/" + change + "/" + artifact
 		}
-		artifact := strings.TrimSuffix(parts[len(parts)-1], ".md")
+		artifact := strings.TrimSuffix(rest[len(rest)-1], ".md")
 		return "sdd/" + change + "/" + artifact
 	}
 

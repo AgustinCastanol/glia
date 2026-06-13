@@ -156,6 +156,16 @@ func TestListNative_MergedSpecsIngested(t *testing.T) {
 	assert.Equal(t, adapter.NativeID("specs/auth/spec.md"), ids[0])
 }
 
+// TestListNative_NonExistentRoot_ReturnsNilNil verifies that ListNative on a
+// non-existent openspec root returns (nil, nil) — lenient behaviour so a
+// disabled openspec does not abort a sync run (PRD-11 §4 open question).
+func TestListNative_NonExistentRoot_ReturnsNilNil(t *testing.T) {
+	a := newAdapter(t, "/does/not/exist/openspec-xyz-999")
+	ids, err := a.ListNative(context.Background(), "proj", time.Time{})
+	require.NoError(t, err)
+	assert.Nil(t, ids)
+}
+
 func TestListNative_SinceMtimeFilter(t *testing.T) {
 	dir := t.TempDir()
 
@@ -386,6 +396,94 @@ func TestToCanonical_Revision_ExistingRecord_UsesMinusSentinel(t *testing.T) {
 	assert.Equal(t, "01HZZZZZZZZZZZZZZZZZZZAAAA", rec.CanonicalID)
 	// Known record → -1 sentinel (ADR-12, same convention as other adapters).
 	assert.Equal(t, -1, rec.Revision)
+}
+
+// ---------------------------------------------------------------------------
+// Archived-change tagging (PRD-11 §9.5)
+// ---------------------------------------------------------------------------
+
+// TestToCanonical_ArchivedArtifact_TaggedArchived verifies that an artifact
+// under changes/archive/<change>/ carries the "archived" tag and that
+// topic_key + type still resolve correctly (the archive/ segment is skipped).
+func TestToCanonical_ArchivedArtifact_TaggedArchived(t *testing.T) {
+	tests := []struct {
+		name          string
+		path          string
+		wantTopicKey  string
+		wantType      string
+	}{
+		{
+			name:         "design under archive",
+			path:         "changes/archive/auth/design.md",
+			wantTopicKey: "sdd/auth/design",
+			wantType:     "design",
+		},
+		{
+			name:         "tasks under archive",
+			path:         "changes/archive/auth/tasks.md",
+			wantTopicKey: "sdd/auth/tasks",
+			wantType:     "tasks",
+		},
+		{
+			name:         "proposal under archive",
+			path:         "changes/archive/my-feature/proposal.md",
+			wantTopicKey: "sdd/my-feature/proposal",
+			wantType:     "proposal",
+		},
+		{
+			name:         "spec nested under archive",
+			path:         "changes/archive/my-feature/specs/req.md",
+			wantTopicKey: "sdd/my-feature/req",
+			wantType:     "spec",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, tt.path, "# Archived Artifact\ncontent")
+
+			a := newAdapter(t, dir)
+			native, err := a.ReadNative(context.Background(), adapter.NativeID(tt.path))
+			require.NoError(t, err)
+
+			rec, err := a.ToCanonical(native, emptyIDMap{})
+			require.NoError(t, err)
+
+			assert.Equal(t, []string{"archived"}, rec.Tags, "archived path must carry archived tag")
+			assert.Equal(t, tt.wantTopicKey, rec.TopicKey, "topic_key must skip archive/ segment")
+			assert.Equal(t, tt.wantType, rec.Type, "type must resolve correctly for archived artifact")
+		})
+	}
+}
+
+// TestToCanonical_NonArchivedArtifact_EmptyTags verifies that a regular
+// (non-archived) artifact keeps empty tags (no false positives).
+func TestToCanonical_NonArchivedArtifact_EmptyTags(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "changes/auth/design.md", "# Design\ncontent")
+
+	a := newAdapter(t, dir)
+	native, err := a.ReadNative(context.Background(), "changes/auth/design.md")
+	require.NoError(t, err)
+
+	rec, err := a.ToCanonical(native, emptyIDMap{})
+	require.NoError(t, err)
+
+	assert.Empty(t, rec.Tags, "non-archived artifact must have empty tags")
+}
+
+// TestListNative_ArchivedDirIngested verifies that ListNative includes .md files
+// under changes/archive/ (they are valid artifacts, just tagged differently).
+func TestListNative_ArchivedDirIngested(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "changes/archive/auth/design.md", "# Archived Design")
+	writeFile(t, dir, "changes/auth/design.md", "# Active Design")
+
+	a := newAdapter(t, dir)
+	ids, err := a.ListNative(context.Background(), "proj", time.Time{})
+	require.NoError(t, err)
+	assert.Len(t, ids, 2, "archived and active artifacts must both be listed")
 }
 
 // ---------------------------------------------------------------------------
