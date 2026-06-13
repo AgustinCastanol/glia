@@ -626,3 +626,140 @@ func TestStatusJSON_WriteCapabilityValue(t *testing.T) {
 		t.Errorf("write_capability[claude-mem] = %q, want %q", cap, "read-only (write_enabled=false)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 6 — sources block in status output (PRD-11 §10)
+// ---------------------------------------------------------------------------
+
+// TestStatusJSON_SourcesKeyPresent verifies that buildStatusJSON includes a
+// "sources" key in JSON output when sources entries are populated.
+func TestStatusJSON_SourcesKeyPresent(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hi", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{},
+		Sources: []enginesync.SourceStatus{
+			{Name: "openspec", WriteCapability: "read-only", Healthy: true},
+		},
+	}
+
+	out, err := buildStatusJSON(s, report, nil)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if _, ok := m["sources"]; !ok {
+		t.Error("expected 'sources' key in JSON output")
+	}
+}
+
+// TestStatusJSON_SourcesEntryHasOpenspecFields verifies the openspec source
+// entry carries name, write_capability, and healthy fields.
+func TestStatusJSON_SourcesEntryHasOpenspecFields(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hi", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{},
+		Sources: []enginesync.SourceStatus{
+			{
+				Name:            "openspec",
+				WriteCapability: "read-only",
+				Healthy:         true,
+				ArtifactCount:   3,
+				NewestArtifact:  "2026-06-12T00:00:00Z",
+			},
+		},
+	}
+
+	out, err := buildStatusJSON(s, report, nil)
+	if err != nil {
+		t.Fatalf("buildStatusJSON: %v", err)
+	}
+
+	if len(out.Sources) != 1 {
+		t.Fatalf("want 1 source entry, got %d", len(out.Sources))
+	}
+	src := out.Sources[0]
+	if src.Name != "openspec" {
+		t.Errorf("source name: want %q, got %q", "openspec", src.Name)
+	}
+	if src.WriteCapability != "read-only" {
+		t.Errorf("write_capability: want %q, got %q", "read-only", src.WriteCapability)
+	}
+	if !src.Healthy {
+		t.Error("healthy: want true")
+	}
+	if src.ArtifactCount != 3 {
+		t.Errorf("artifact_count: want 3, got %d", src.ArtifactCount)
+	}
+	if src.NewestArtifact != "2026-06-12T00:00:00Z" {
+		t.Errorf("newest_artifact: want %q, got %q", "2026-06-12T00:00:00Z", src.NewestArtifact)
+	}
+}
+
+// TestStatus_TableHasSourcesBlock verifies that when sources are present the
+// table output contains a SOURCES section distinct from the PROVIDER table.
+func TestStatus_TableHasSourcesBlock(t *testing.T) {
+	dir := t.TempDir()
+	seedStore(t, dir, []store.CanonicalRecord{
+		{Kind: "observation", Title: "hi", Type: "note"},
+	})
+
+	s := openStoreForTest(t, dir)
+	defer s.Close()
+
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{},
+		Sources: []enginesync.SourceStatus{
+			{Name: "openspec", WriteCapability: "read-only", Healthy: true},
+		},
+	}
+
+	var buf strings.Builder
+	printSourcesTable(&buf, report)
+	out := buf.String()
+
+	if !strings.Contains(out, "SOURCE") {
+		t.Errorf("expected SOURCE column header in sources table, got:\n%s", out)
+	}
+	if !strings.Contains(out, "openspec") {
+		t.Errorf("expected 'openspec' in sources table, got:\n%s", out)
+	}
+	if !strings.Contains(out, "read-only") {
+		t.Errorf("expected 'read-only' in sources table, got:\n%s", out)
+	}
+}
+
+// TestStatus_TableNoSourcesBlock verifies printSourcesTable produces no output
+// when the Sources slice is empty.
+func TestStatus_TableNoSourcesBlock(t *testing.T) {
+	report := &enginesync.StatusReport{
+		ProviderHealth: map[string]error{},
+		Sources:        nil,
+	}
+	var buf strings.Builder
+	printSourcesTable(&buf, report)
+	if buf.String() != "" {
+		t.Errorf("expected empty output for no sources, got: %q", buf.String())
+	}
+}
