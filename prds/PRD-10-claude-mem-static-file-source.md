@@ -1,10 +1,31 @@
 # PRD-10 — claude-mem static file source (file transport)
 
-**Status:** Draft
+**Status:** Deferred — blocked upstream
 **Owner:** @agustincastanol
-**Last updated:** 2026-05-31
+**Last updated:** 2026-06-13
 **Depends on:** PRD-0 (canonical schema), PRD-1 (adapter contract), PRD-2 (claude-mem adapter, read-only HTTP)
-**Target release:** next minor (v1.x)
+**Target release:** unscheduled (pending upstream export surface)
+
+---
+
+## 0. Deferral note (2026-06-13)
+
+This PRD is **deferred — blocked upstream**. The `static-file-sources` SDD change
+shipped PRD-11 (openspec source) only; PRD-10 was not implemented.
+
+**Reason:** the file transport requires claude-mem to emit its data as static files,
+but no such surface exists. Confirmed during the `static-file-sources` exploration
+against claude-mem v13.2.0:
+
+- No `exports/` or `archive/` directory exists under `~/.claude-mem/` — only the live
+  SQLite database, `supervisor.json`, `chroma/`, `logs/`, and `backups/`.
+- The `server export` command referenced in §3 is **unimplemented**: inspection of the
+  worker bundle (`worker-service.cjs`) found no export route handlers.
+- Direct SQLite reads remain rejected (§3): fragile across claude-mem versions.
+
+With nothing to read, the `file` transport has no source. **Revisit when claude-mem
+ships a stable export/archive surface** (e.g. a real `server export`). The design below
+is preserved as-is for that future work.
 
 ---
 
