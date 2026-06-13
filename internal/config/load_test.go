@@ -552,6 +552,34 @@ func TestLoad_OpenspecAbsentKeyDoesNotOverride(t *testing.T) {
 	}
 }
 
+// TestLoad_OpenspecPathExpandsTilde verifies that a leading "~/" in
+// sources.openspec.path is expanded to the user home directory (SUGGESTION-02).
+func TestLoad_OpenspecPathExpandsTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("cannot determine user home dir")
+	}
+
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, `schema_version: 1
+project: proj
+sources:
+  openspec:
+    enabled: true
+    path: ~/my-openspec
+`)
+
+	cfg, err := Load(dir, "/nonexistent/user.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	want := filepath.Join(home, "my-openspec")
+	if cfg.Sources.Openspec.Path != want {
+		t.Errorf("Sources.Openspec.Path: got %q, want %q (tilde not expanded)", cfg.Sources.Openspec.Path, want)
+	}
+}
+
 // TestLoad_OpenspecUserOverridesProject verifies that the user config layer
 // overrides the project config for openspec settings.
 func TestLoad_OpenspecUserOverridesProject(t *testing.T) {

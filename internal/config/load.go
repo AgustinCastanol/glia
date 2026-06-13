@@ -292,6 +292,7 @@ func expandPaths(c *Config) {
 	for k, v := range c.Providers.ClaudeMem.ProjectPathMapping {
 		c.Providers.ClaudeMem.ProjectPathMapping[k] = expandHome(v, home)
 	}
+	c.Sources.Openspec.Path = expandHome(c.Sources.Openspec.Path, home)
 }
 
 // expandHome expands a leading "~/" or bare "~" using home.
