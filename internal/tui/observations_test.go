@@ -295,3 +295,113 @@ func TestObsModel_View_ContainsList(t *testing.T) {
 		t.Error("View() returned empty string")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 7 — TUI kind/type filter extension (PRD-11)
+// ---------------------------------------------------------------------------
+
+// TestObsKindFilters_ContainsSpecArtifact verifies that the obsKindFilters
+// slice includes "spec_artifact" so the [f] key can cycle to it.
+func TestObsKindFilters_ContainsSpecArtifact(t *testing.T) {
+	found := false
+	for _, k := range obsKindFilters {
+		if k == "spec_artifact" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("obsKindFilters does not contain 'spec_artifact'; got: %v", obsKindFilters)
+	}
+}
+
+// TestObsTypeFilters_ContainsSpecArtifactTypes verifies that the obsTypeFilters
+// slice includes all four SDD artifact types.
+func TestObsTypeFilters_ContainsSpecArtifactTypes(t *testing.T) {
+	want := []string{"proposal", "spec", "design", "tasks"}
+	for _, w := range want {
+		found := false
+		for _, k := range obsTypeFilters {
+			if k == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("obsTypeFilters missing %q; got: %v", w, obsTypeFilters)
+		}
+	}
+}
+
+// TestFilterRecords_KindFilter_SpecArtifact verifies that filterRecords returns
+// only spec_artifact records when the kind filter is set to "spec_artifact".
+func TestFilterRecords_KindFilter_SpecArtifact(t *testing.T) {
+	recs := append(sampleLazyRecords(), toLazyRecords([]store.CanonicalRecord{
+		{CanonicalID: "s1", Title: "Auth Design", Kind: "spec_artifact", Type: "design", SchemaVersion: 1},
+		{CanonicalID: "s2", Title: "Auth Proposal", Kind: "spec_artifact", Type: "proposal", SchemaVersion: 1},
+	})...)
+
+	got := filterRecords(recs, "", "spec_artifact", "")
+	if len(got) != 2 {
+		t.Fatalf("want 2 spec_artifact records, got %d", len(got))
+	}
+	for _, r := range got {
+		if r.Kind != "spec_artifact" {
+			t.Errorf("unexpected kind %q in result", r.Kind)
+		}
+	}
+}
+
+// TestFilterRecords_TypeFilter_Proposal verifies that filterRecords returns
+// only records with type "proposal" when the type filter is set.
+func TestFilterRecords_TypeFilter_Proposal(t *testing.T) {
+	recs := toLazyRecords([]store.CanonicalRecord{
+		{CanonicalID: "s1", Title: "Auth Proposal", Kind: "spec_artifact", Type: "proposal", SchemaVersion: 1},
+		{CanonicalID: "s2", Title: "Auth Design", Kind: "spec_artifact", Type: "design", SchemaVersion: 1},
+		{CanonicalID: "s3", Title: "Auth Tasks", Kind: "spec_artifact", Type: "tasks", SchemaVersion: 1},
+	})
+
+	got := filterRecords(recs, "", "", "proposal")
+	if len(got) != 1 {
+		t.Fatalf("want 1 proposal record, got %d", len(got))
+	}
+	if got[0].CanonicalID != "s1" {
+		t.Errorf("want s1, got %s", got[0].CanonicalID)
+	}
+}
+
+// TestFilterRecords_TypeFilter_Design verifies design type filter.
+func TestFilterRecords_TypeFilter_Design(t *testing.T) {
+	recs := toLazyRecords([]store.CanonicalRecord{
+		{CanonicalID: "s1", Title: "Auth Proposal", Kind: "spec_artifact", Type: "proposal", SchemaVersion: 1},
+		{CanonicalID: "s2", Title: "Auth Design", Kind: "spec_artifact", Type: "design", SchemaVersion: 1},
+	})
+	got := filterRecords(recs, "", "", "design")
+	if len(got) != 1 || got[0].CanonicalID != "s2" {
+		t.Errorf("want s2 for design filter, got %v", got)
+	}
+}
+
+// TestFilterRecords_TypeFilter_Tasks verifies tasks type filter.
+func TestFilterRecords_TypeFilter_Tasks(t *testing.T) {
+	recs := toLazyRecords([]store.CanonicalRecord{
+		{CanonicalID: "s3", Title: "Auth Tasks", Kind: "spec_artifact", Type: "tasks", SchemaVersion: 1},
+		{CanonicalID: "s4", Title: "Auth Design", Kind: "spec_artifact", Type: "design", SchemaVersion: 1},
+	})
+	got := filterRecords(recs, "", "", "tasks")
+	if len(got) != 1 || got[0].CanonicalID != "s3" {
+		t.Errorf("want s3 for tasks filter, got %v", got)
+	}
+}
+
+// TestFilterRecords_TypeFilter_Spec verifies spec type filter (merged specs).
+func TestFilterRecords_TypeFilter_Spec(t *testing.T) {
+	recs := toLazyRecords([]store.CanonicalRecord{
+		{CanonicalID: "s5", Title: "Auth Spec", Kind: "spec_artifact", Type: "spec", SchemaVersion: 1},
+		{CanonicalID: "s6", Title: "Auth Design", Kind: "spec_artifact", Type: "design", SchemaVersion: 1},
+	})
+	got := filterRecords(recs, "", "", "spec")
+	if len(got) != 1 || got[0].CanonicalID != "s5" {
+		t.Errorf("want s5 for spec filter, got %v", got)
+	}
+}

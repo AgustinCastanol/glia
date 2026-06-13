@@ -30,10 +30,12 @@ type obsReloadMsg struct {
 }
 
 // kindFilter sentinel values for cycling via [f].
-var obsKindFilters = []string{"", "observation", "session_summary", "relation"}
+// spec_artifact is included so SDD planning records are reachable (PRD-11).
+var obsKindFilters = []string{"", "observation", "session_summary", "relation", "spec_artifact"}
 
 // typeFilter sentinel values for cycling via [t].
-var obsTypeFilters = []string{"", "bugfix", "decision", "architecture", "discovery", "pattern", "config", "learning"}
+// proposal, spec, design, tasks added for SDD artifact types (PRD-11).
+var obsTypeFilters = []string{"", "bugfix", "decision", "architecture", "discovery", "pattern", "config", "learning", "proposal", "spec", "design", "tasks"}
 
 // obsModel implements the Observations tab. It shows a filterable list on the
 // left and a detail pane on the right. Full-screen detail is toggled by enter.
