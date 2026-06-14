@@ -6,6 +6,67 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.4.0] - 2026-06-13
+
+### Added
+
+- **Read-only `openspec` source** (PRD-11): ingests SDD/OpenSpec artifacts
+  (`proposal.md`, `design.md`, `tasks.md`, `specs/**/*.md`) from an `openspec/`
+  directory into the canonical store, making them searchable in the TUI and
+  pushable to providers without any daemon or network dependency.
+  Enable with `sources.openspec.enabled: true` in `.glia/config.yaml`.
+  Foundation in PR #11; `glia status` Sources block, TUI filters, and
+  sync-engine ingestion fix in PR #12.
+
+- **`glia status` Sources block**: when at least one read-only source is
+  configured, status prints a separate `SOURCE / STATUS / WRITE_CAPABILITY /
+  ARTIFACTS / NEWEST` table. The `--json` output gains a `sources` array
+  (`name`, `write_capability`, `healthy`, `health_error`, `artifact_count`,
+  `newest_artifact`).
+
+### Fixed
+
+- **`glia status` newest-artifact timestamp**: `NewestArtifact` in the Sources
+  block now correctly reports the most-recently-modified artifact file per source
+  (PRD-11 §10) (PR #14).
+
+### Notes
+
+- **claude-mem `supervisor.json` publishes no `port` field** (PR #13): the
+  supervisor manifest does not include a port entry; the worker address is fixed
+  at `localhost:37701`.
+
+---
+
+## [1.3.1] - 2026-06-02
+
+### Added
+
+- **`SECURITY.md` and `CODEOWNERS`** added for the OSS launch (PR #9).
+
+### Fixed
+
+- **TUI Observations/Conflicts views showed empty**: store files were read from
+  the project root instead of the `.glia/` subdirectory; now read from `.glia/`
+  (PR #10).
+
+---
+
+## [1.3.0] - 2026-06-01
+
+### Fixed
+
+- **TUI async loads route to the owning sub-model**: async data loads now
+  dispatch messages to the correct sub-model; tab navigation redesigned to be
+  intuitive (PR #7).
+
+### Docs
+
+- README rewritten as a public OSS guide; `docs/` promoted out of drafts;
+  PRD-8, PRD-9, PRD-10, PRD-11 added (PR #8).
+
+---
+
 ## [1.2.0] - 2026-05-29
 
 ### Added

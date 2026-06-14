@@ -40,21 +40,71 @@ type CanonicalRecord struct {
 
 ### El Origen (`Origin`)
 Guarda la trazabilidad de dónde provino la memoria:
-- **Provider**: El nombre del adaptador de origen (ej. `engram`, `claudemem`).
+- **Provider**: El nombre del adaptador de origen (ej. `engram`, `claudemem`, `openspec`).
 - **ProviderID**: El identificador único que tenía el registro en la herramienta externa.
 - **Author**: Quién creó la memoria (nombre de usuario, correo o host local).
 - **SessionID**: Identificador de la sesión de chat/trabajo si aplica.
 
+### Tipos de registro (`kind`)
+
+El campo `kind` distingue el tipo semántico de un registro:
+
+| `kind` | Descripción |
+| :--- | :--- |
+| `observation` | Memoria / hecho observado — el tipo principal de engram y claude-mem. |
+| `session_summary` | Resumen de sesión de trabajo (ej. narrativa de claude-mem). |
+| `spec_artifact` | Artefacto de diseño SDD: proposal, spec, design o tasks (fuente openspec). |
+
 ---
 
-## 🔒 3. Advisory Locking (Bloqueo Asesor)
+---
+
+## 🗂️ 3. Fuentes vs. Proveedores (Sources vs. Providers)
+
+glia distingue dos tipos de integraciones externas:
+
+| Concepto | Dirección | Ejemplo | Config key |
+| :--- | :--- | :--- | :--- |
+| **Proveedor** (`provider`) | Bidireccional — pull Y push | engram, claude-mem | `providers:` |
+| **Fuente** (`source`) | Solo lectura — únicamente pull | openspec | `sources:` |
+
+Los **proveedores** son daemons o herramientas de memoria de IA: glia les saca registros (pull) y les devuelve el store canónico (push). El flujo de datos va en ambas direcciones.
+
+Las **fuentes** son archivos estáticos en disco: glia los lee e ingesta sus contenidos como registros canónicos, pero nunca los modifica. Son la puerta de entrada para información que ya existe en el repositorio (artefactos SDD, notas, specs) sin necesidad de ningún daemon ni red.
+
+### La fuente `openspec`
+
+La fuente `openspec` lee los artefactos del flujo SDD (Spec-Driven Development) desde el directorio `openspec/` del repositorio:
+
+```
+openspec/
+  changes/
+    <nombre-del-cambio>/
+      proposal.md    → kind: spec_artifact, type: proposal
+      design.md      → kind: spec_artifact, type: design
+      tasks.md       → kind: spec_artifact, type: tasks
+      specs/*.md     → kind: spec_artifact, type: spec
+  specs/
+    <dominio>/spec.md → kind: spec_artifact, type: spec
+```
+
+Cada archivo se convierte en un registro canónico con:
+- `topic_key` = `sdd/<cambio>/<artefacto>` (ej. `sdd/auth/design`) para cambios activos, o `spec/<dominio>` para specs consolidadas.
+- `content_format` = `"markdown"` con el texto completo del archivo.
+- `origin.provider` = `"openspec"`.
+
+La fuente es **completamente idempotente**: re-ejecutar la ingesta sobre un árbol sin cambios no produce ninguna revisión nueva (se controla por hash del contenido).
+
+---
+
+## 🔒 4. Advisory Locking (Bloqueo Asesor)
 
 Para garantizar la integridad del archivo `memory.jsonl` y evitar que múltiples herramientas CLI o daemons modifiquen el archivo simultáneamente, se utiliza un sistema de **bloqueo a nivel de sistema operativo** (usando la librería `gofrs/flock` sobre el archivo `.lock` en la carpeta del store).
 - **Garantía**: Un solo proceso de escritura a la vez puede abrir el store. Si otro proceso intenta abrir el store mientras está bloqueado, recibe inmediatamente un error `ErrLocked` no bloqueante.
 
 ---
 
-## 🔌 4. Adaptadores y el Contrato de Pureza
+## 🔌 5. Adaptadores y el Contrato de Pureza
 
 Los adaptadores traducen memorias entre el formato nativo de un proveedor de IA (como Engram o Claude) y el formato del Store Canónico de `glia`.
 
@@ -71,7 +121,7 @@ Durante el mapeo, se necesita traducir identificadores nativos de los proveedore
 
 ---
 
-## 🔄 5. El Motor de Sincronización (Sync Engine)
+## 🔄 6. El Motor de Sincronización (Sync Engine)
 
 El motor de sincronización (`internal/sync`) se encarga de coordinar la transferencia bidireccional de registros en dos flujos fundamentales:
 
@@ -95,7 +145,7 @@ Cualquier falla en los comandos Git se trata como un warning en consola y no abo
 
 ---
 
-## ⚔️ 6. Detección y Resolución de Conflictos
+## ⚔️ 7. Detección y Resolución de Conflictos
 
 Dado que la sincronización es bidireccional y distribuida en múltiples proveedores, pueden surgir colisiones (ej. una misma memoria modificada en Claude y en Engram de forma paralela).
 

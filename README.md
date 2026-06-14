@@ -71,7 +71,7 @@ Or build from source with an embedded version string:
 ```bash
 git clone https://github.com/agustincastanol/glia
 cd glia
-go build -ldflags "-X github.com/agustincastanol/glia/cmd/glia/cmd.Version=v1.2.0" -o glia ./cmd/glia
+go build -ldflags "-X github.com/agustincastanol/glia/cmd/glia/cmd.Version=v1.4.0" -o glia ./cmd/glia
 ```
 
 **Provider prerequisites** (only the ones you enable):
@@ -146,6 +146,11 @@ sync:
   auto_commit: false              # git-commit .glia/ after sync (or use `glia sync --commit`)
   mirror_timeout_seconds: 5
 
+sources:
+  openspec:
+    enabled: false                # set true to ingest SDD/openspec artifacts
+    path: openspec                # repo-relative path to openspec root
+
 privacy:
   excluded_session_ids: []        # session IDs never synced
 
@@ -167,6 +172,9 @@ Each provider can use a different project namespace. Resolution order, highest p
 
 ## Providers
 
+Providers are **bidirectional**: glia pulls records from them and pushes the canonical
+store back out to them.
+
 | Provider | Transport | Capability |
 |----------|-----------|------------|
 | **engram** | CLI + HTTP daemon (`:7437`) | read + write |
@@ -174,6 +182,37 @@ Each provider can use a different project namespace. Resolution order, highest p
 
 The adapter contract is provider-agnostic — adding a new provider means implementing one
 interface. See [`docs/internals.md`](docs/internals.md) for the adapter contract.
+
+## Sources (read-only ingest)
+
+Sources are **read-only**: glia ingests records from them into the canonical store and
+then pushes those records out to providers. They have no write path — glia never
+modifies a source's files.
+
+| Source | What it ingests | Capability |
+|--------|-----------------|------------|
+| **openspec** | SDD artifact files under `openspec/` (`proposal.md`, `design.md`, `tasks.md`, `specs/**/*.md`) | read-only |
+
+Enable an openspec source in `.glia/config.yaml`:
+
+```yaml
+sources:
+  openspec:
+    enabled: true
+    path: openspec        # repo-relative path to the openspec root; default "openspec"
+```
+
+After enabling, `glia sync` ingests every artifact as a `spec_artifact` record and
+`glia status` prints a Sources block:
+
+```
+SOURCE     STATUS   WRITE_CAPABILITY   ARTIFACTS   NEWEST
+openspec   healthy  read-only          23          2026-06-13T01:40:00Z
+```
+
+> **Sources vs Providers:** providers sync bidirectionally (pull + push); sources
+> only feed records into the store (pull only). The `sources:` and `providers:` config
+> keys are intentionally separate to make this asymmetry structural.
 
 ## Privacy
 
@@ -190,6 +229,7 @@ memory stays in your repo.
 | PRD-7 — claude-mem write support | Shipped |
 | PRD-8 — claude-mem server-beta (updates) | Shelved — [decision record](prds/PRD-8-claude-mem-server-beta.md) |
 | PRD-9 — local store backup & rollback | Draft — [proposal](prds/PRD-9-local-store-backup-rollback.md) |
+| PRD-11 — openspec static artifact source | Shipped (v1.4.0) |
 
 ## Documentation
 
