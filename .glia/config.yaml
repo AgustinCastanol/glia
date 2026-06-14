@@ -1,0 +1,28 @@
+schema_version: 1
+project: glia
+providers:
+    engram:
+        enabled: true
+        transport: cli
+        cli_path: engram
+        http_base_url: http://localhost:7437
+        project: wrapper-mems
+    claude-mem:
+        enabled: true
+        transport: http
+        http_base_url: http://localhost:37701
+        worker_pid_path: ~/.claude-mem/worker.pid
+        project_path_mapping: {}
+sources:
+    openspec:
+        enabled: true
+        path: openspec
+sync:
+    mirror_engram: false
+    default_action: full
+    auto_commit: false
+    mirror_timeout_seconds: 5
+privacy:
+    excluded_session_ids: []
+identity:
+    author: ""

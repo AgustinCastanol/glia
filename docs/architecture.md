@@ -31,6 +31,16 @@ Ubicación: [internal/adapter](../internal/adapter)
 - **Subpaquete `engram`**: Implementa la comunicación con la CLI de Engram mediante ejecuciones de comandos en terminal (`execCommander`) y HTTP client para el daemon local (`httpTransport`).
 - **Subpaquete `claudemem`**: Implementa la comunicación HTTP de solo lectura con el daemon de Claude-Mem, con paginación de observaciones nativas y transformación a registros canónicos del tipo `session_summary`.
 
+### Paquete `internal/source/openspec` (Fuente de solo lectura)
+Ubicación: [internal/source/openspec](../internal/source/openspec)
+- Implementa `adapter.Adapter` para la fuente estática de artefactos SDD (PRD-11).
+- **Dirección de importación**: `internal/source/openspec` → `internal/adapter` → `internal/store`. El paquete `internal/store` nunca importa a los adaptadores (restricción arquitectónica).
+- `ListNative` recorre el directorio `openspec/` con `filepath.WalkDir` y devuelve los paths relativos de todos los `.md` encontrados (ordenados, determinísticos).
+- `ReadNative` lee el contenido del archivo y su `ModTime`.
+- `ToCanonical` convierte cada archivo en un `CanonicalRecord` con `kind: spec_artifact`, derivando el `topic_key` (`sdd/<cambio>/<artefacto>` o `spec/<dominio>`) y el `type` (`proposal | design | tasks | spec`) desde el path relativo.
+- `FromCanonical` y `WriteNative` retornan `ErrUnsupported` — la puerta anti-leakage que garantiza que el motor de sync nunca intente escribir en los archivos fuente (D2).
+- `WriteCapability()` devuelve `"read-only"`, lo que hace que el motor de sync clasifique esta integración como `Source` en lugar de `Provider` y la muestre en el bloque separado de `glia status`.
+
 ### Paquete `internal/sync` (Motor de Sincronización)
 Ubicación: [internal/sync](../internal/sync)
 - Orquesta las etapas de Pull y Push.
@@ -77,6 +87,7 @@ La escritura de nuevas memorias o actualizaciones se realiza siempre a través d
 Cuando se ejecuta `glia sync`, el motor orquesta el siguiente ciclo:
 
 1. **Espejo Engram Inicial**: Si la opción de espejo está activa, se fuerza una sincronización de Engram interna ejecutando `engram sync` en la terminal para asegurar que el daemon local tenga los datos más recientes.
+1a. **Ingesta de fuentes estáticas** (si están habilitadas, ej. openspec): el motor llama a `ListNative` + `ReadNative` + `ToCanonical` sobre cada adaptador cuyo `WriteCapability()` devuelva `"read-only"`. Los registros resultantes se insertan en el store canónico exactamente igual que los registros de cualquier proveedor — la diferencia es que el motor nunca intenta hacer push hacia estas fuentes.
 2. **PULL (Desde el Store hacia el Proveedor)**:
    - Se obtienen todos los registros vivos del Store Canónico usando `ListLive()`.
    - Para cada proveedor activo, se filtran los registros cuyos tipos de datos no son soportados (ej. Claude-Mem no soporta relaciones).

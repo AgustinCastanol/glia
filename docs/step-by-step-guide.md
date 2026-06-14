@@ -70,7 +70,87 @@ Para buscar, leer y explorar las memorias indexadas de forma interactiva:
 
 ---
 
-## ⚔️ 4. Guía Paso a Paso para Resolver Conflictos
+## 📂 4. Habilitar la fuente openspec
+
+Si tu proyecto usa SDD (Spec-Driven Development) y tenés artefactos en un directorio `openspec/`, podés hacer que glia los ingeste automáticamente como registros canónicos, sin ningún daemon ni red.
+
+### Paso 1: Agregar la sección `sources` al config
+
+Abrí `.glia/config.yaml` y agregá:
+
+```yaml
+sources:
+  openspec:
+    enabled: true
+    path: openspec        # ruta relativa al repo; el default es "openspec"
+```
+
+Si el directorio `openspec/` vive en la raíz del repo (el caso habitual), no hace falta cambiar `path`.
+
+### Paso 2: Sincronizar para ingestar los artefactos
+
+```bash
+./glia sync
+```
+
+glia va a recorrer el directorio `openspec/` e ingestar todos los archivos `.md` que encuentre:
+- `changes/<cambio>/proposal.md`
+- `changes/<cambio>/design.md`
+- `changes/<cambio>/tasks.md`
+- `changes/<cambio>/specs/**/*.md`
+- `specs/<dominio>/spec.md`
+
+Cada archivo se convierte en un registro `spec_artifact` en el store canónico. Re-ejecutar `sync` sobre un árbol sin cambios es un no-op (idempotente por hash de contenido).
+
+### Paso 3: Verificar el estado de la fuente
+
+```bash
+./glia status
+```
+
+Si la fuente está activa, vas a ver un bloque adicional debajo de la tabla de proveedores:
+
+```
+SOURCE     STATUS   WRITE_CAPABILITY   ARTIFACTS   NEWEST
+openspec   healthy  read-only          23          2026-06-13T01:40:00Z
+```
+
+Los campos:
+- **ARTIFACTS**: cantidad de archivos `.md` encontrados en el directorio `openspec/`.
+- **NEWEST**: timestamp RFC3339 del archivo modificado más recientemente.
+
+Para obtener la misma información en JSON (útil para scripts o la TUI):
+
+```bash
+./glia status --json | jq '.sources'
+```
+
+La respuesta tiene la forma:
+```json
+[
+  {
+    "name": "openspec",
+    "write_capability": "read-only",
+    "healthy": true,
+    "artifact_count": 23,
+    "newest_artifact": "2026-06-13T01:40:00Z"
+  }
+]
+```
+
+### Paso 4: Buscar artefactos en la TUI
+
+```bash
+./glia tui
+```
+
+Los artefactos ingestados aparecen en la lista de memorias como registros de `kind: spec_artifact`. Podés filtrarlos por `type` (`proposal`, `design`, `tasks`, `spec`) o buscarlos por título.
+
+> **La fuente openspec es de solo lectura.** glia nunca crea, modifica ni elimina archivos bajo `openspec/`. El directorio es siempre la fuente de verdad.
+
+---
+
+## ⚔️ 5. Guía Paso a Paso para Resolver Conflictos
 
 Si dos adaptadores modifican la misma memoria de forma paralela en una revisión (ej. la revisión 3), el store entrará en estado de conflicto. Seguí estos pasos para solucionarlo:
 
@@ -107,7 +187,7 @@ Una vez decidido qué contenido es el correcto, ejecutá `sync resolve` con el I
 
 ---
 
-## 🔌 5. Guía del Desarrollador: Crear un Nuevo Adaptador
+## 🔌 6. Guía del Desarrollador: Crear un Nuevo Adaptador
 
 Si querés agregar soporte para un nuevo proveedor de memoria (ej. `my-ai-memory`), tenés que seguir este paso a paso técnico.
 

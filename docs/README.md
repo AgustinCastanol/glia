@@ -21,9 +21,9 @@ Para entender a fondo el sistema o empezar a trabajar en él, explorá las sigui
 
 | Documento | Descripción | Temas Clave |
 | :--- | :--- | :--- |
-| [Conceptos Clave](concepts.md) | Definiciones técnicas y fundamentales del dominio de glia. | Store Canónico, Inmutabilidad, Revisión, Tombstones, Contratos de Adaptadores, Motores de Sincronización, Resolución de Conflictos. |
-| [Arquitectura y Flujo de Datos](architecture.md) | Diseño del sistema, responsabilidades de paquetes y secuencias detalladas de I/O. | Bootstrapping del Store, xxhash fingerprinting, Dos Pasos de Decodificación (decodeLine), Flujos de Ingesta (Pull/Push). |
-| [Guía Paso a Paso](step-by-step-guide.md) | Tutoriales prácticos para instalar, operar la herramienta y extenderla. | Setup inicial, comandos CLI, resolución de conflictos, navegación mediante la TUI, creación de nuevos adaptadores. |
+| [Conceptos Clave](concepts.md) | Definiciones técnicas y fundamentales del dominio de glia. | Store Canónico, Inmutabilidad, Revisión, Tombstones, Fuentes vs. Proveedores, Contratos de Adaptadores, Motores de Sincronización, Resolución de Conflictos. |
+| [Arquitectura y Flujo de Datos](architecture.md) | Diseño del sistema, responsabilidades de paquetes y secuencias detalladas de I/O. | Bootstrapping del Store, xxhash fingerprinting, Dos Pasos de Decodificación (decodeLine), Flujos de Ingesta (Pull/Push), fuente openspec (`internal/source/openspec`). |
+| [Guía Paso a Paso](step-by-step-guide.md) | Tutoriales prácticos para instalar, operar la herramienta y extenderla. | Setup inicial, comandos CLI, habilitar la fuente openspec, resolución de conflictos, navegación mediante la TUI, creación de nuevos adaptadores. |
 
 ---
 
@@ -48,6 +48,12 @@ El diseño sigue una separación de capas estricta para evitar acoplamientos (lo
 │    - memory.jsonl (Registro inmutable append-only)       │
 │    - index.json   (Índice rápido con xxhash)            │
 │    - schema.json  (Versión del esquema)                 │
+└─────────────────────────────────────────────────────────┘
+             ▲
+             │ (ingesta de solo lectura)
+┌────────────┴────────────────────────────────────────────┐
+│               Static Sources (read-only)                │
+│          (internal/source/openspec — artefactos SDD)    │
 └─────────────────────────────────────────────────────────┘
 ```
 
