@@ -47,6 +47,9 @@ func (r *readOnlyFakeAdapter) WriteNative(_ context.Context, _ adapter.NativeRec
 type sourceFakeAdapter struct {
 	name    string
 	listIDs []adapter.NativeID
+	// updatedByID, when non-nil, maps a native id to the UpdatedAt that
+	// ToCanonical stamps on its record (used by newest-artifact tests).
+	updatedByID map[adapter.NativeID]string
 }
 
 func (s *sourceFakeAdapter) Name() string { return s.name }
@@ -64,7 +67,7 @@ func (s *sourceFakeAdapter) ReadNative(_ context.Context, id adapter.NativeID) (
 
 func (s *sourceFakeAdapter) ToCanonical(native adapter.NativeRecord, _ adapter.IDMap) (store.CanonicalRecord, error) {
 	m := native.(map[string]string)
-	return store.CanonicalRecord{
+	rec := store.CanonicalRecord{
 		Kind:          "spec_artifact",
 		Type:          "proposal",
 		Title:         m["id"],
@@ -74,7 +77,11 @@ func (s *sourceFakeAdapter) ToCanonical(native adapter.NativeRecord, _ adapter.I
 			Provider:   s.name,
 			ProviderID: m["id"],
 		},
-	}, nil
+	}
+	if s.updatedByID != nil {
+		rec.UpdatedAt = s.updatedByID[adapter.NativeID(m["id"])]
+	}
+	return rec, nil
 }
 
 func (s *sourceFakeAdapter) FromCanonical(_ store.CanonicalRecord) (adapter.NativeRecord, error) {
@@ -85,6 +92,63 @@ func (s *sourceFakeAdapter) WriteNative(_ context.Context, _ adapter.NativeRecor
 	// A true read-only source must never have WriteNative called via Pull.
 	// If this is called, the test will catch it by inspecting store state.
 	return "", adapter.ErrUnsupported
+}
+
+// ---- source status (newest artifact) tests ----
+
+// TestSourceStatus_NewestArtifact verifies that Status() reports the most recent
+// artifact timestamp across a source's records in SourceStatus.NewestArtifact
+// (PRD-11 §10).
+func TestSourceStatus_NewestArtifact(t *testing.T) {
+	s, _ := openTestStore(t)
+
+	src := &sourceFakeAdapter{
+		name:    "openspec",
+		listIDs: []adapter.NativeID{"a", "b", "c"},
+		updatedByID: map[adapter.NativeID]string{
+			"a": "2026-01-01T00:00:00Z",
+			"b": "2026-06-13T10:00:00Z", // newest
+			"c": "2026-03-15T12:00:00Z",
+		},
+	}
+	adapters := map[string]adapter.Adapter{"openspec": src}
+	e := New(s, adapters, Default(), Options{}, io.Discard)
+
+	report, err := e.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(report.Sources) != 1 {
+		t.Fatalf("want 1 source, got %d", len(report.Sources))
+	}
+	got := report.Sources[0]
+	if got.ArtifactCount != 3 {
+		t.Errorf("ArtifactCount = %d, want 3", got.ArtifactCount)
+	}
+	if got.NewestArtifact != "2026-06-13T10:00:00Z" {
+		t.Errorf("NewestArtifact = %q, want %q", got.NewestArtifact, "2026-06-13T10:00:00Z")
+	}
+}
+
+// TestSourceStatus_NewestArtifactEmptyWhenNoArtifacts verifies NewestArtifact is
+// empty (rendered as "-") when the source has no artifacts.
+func TestSourceStatus_NewestArtifactEmptyWhenNoArtifacts(t *testing.T) {
+	s, _ := openTestStore(t)
+
+	src := &sourceFakeAdapter{name: "openspec", listIDs: nil}
+	adapters := map[string]adapter.Adapter{"openspec": src}
+	e := New(s, adapters, Default(), Options{}, io.Discard)
+
+	report, err := e.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(report.Sources) != 1 {
+		t.Fatalf("want 1 source, got %d", len(report.Sources))
+	}
+	if report.Sources[0].NewestArtifact != "" {
+		t.Errorf("NewestArtifact = %q, want empty", report.Sources[0].NewestArtifact)
+	}
 }
 
 // ---- activeSources() unit tests ----

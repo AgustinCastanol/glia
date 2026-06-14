@@ -393,9 +393,34 @@ func (e *Engine) sourceStatus(ctx context.Context, a adapter.Adapter) SourceStat
 		return ss
 	}
 	ss.Healthy = true
-	// Best-effort: list artifacts to get count and newest mtime.
-	if ids, listErr := a.ListNative(ctx, "", zeroTime); listErr == nil {
-		ss.ArtifactCount = len(ids)
+	// Best-effort: list artifacts for count and newest timestamp (PRD-11 §10).
+	ids, listErr := a.ListNative(ctx, "", zeroTime)
+	if listErr != nil {
+		return ss
+	}
+	ss.ArtifactCount = len(ids)
+
+	idmap := providerIDMapAdapter{inner: e.store.ProviderIDMap(a.Name())}
+	var newest time.Time
+	for _, id := range ids {
+		native, err := a.ReadNative(ctx, id)
+		if err != nil {
+			continue
+		}
+		rec, err := a.ToCanonical(native, idmap)
+		if err != nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, rec.UpdatedAt)
+		if err != nil {
+			continue
+		}
+		if t.After(newest) {
+			newest = t
+		}
+	}
+	if !newest.IsZero() {
+		ss.NewestArtifact = newest.UTC().Format(time.RFC3339)
 	}
 	return ss
 }
